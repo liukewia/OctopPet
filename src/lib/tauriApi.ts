@@ -21,6 +21,8 @@ export const tauriApi = {
     invoke<void>("place_window_bottom_center", { label }),
   placeWindowCentered: (label: string) =>
     invoke<void>("place_window_centered", { label }),
+  applyBottomAnchoredSize: (width: number, height: number, animate = false) =>
+    invoke<void>("apply_bottom_anchored_size", { width, height, animate }),
   reloadHotkeys: () => invoke<void>("reload_hotkeys"),
   emitAuthUpdated: () => emit("auth-updated"),
   listenAuthUpdated: (handler: () => void) => listen("auth-updated", handler),

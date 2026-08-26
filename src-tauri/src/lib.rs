@@ -59,6 +59,7 @@ pub fn run() {
             window_cmd::show_settings,
             window_cmd::place_window_bottom_center,
             window_cmd::place_window_centered,
+            window_cmd::apply_bottom_anchored_size,
             tray::reload_hotkeys,
         ])
         .run(tauri::generate_context!())

@@ -99,7 +99,7 @@ export default function Composer({
       textarea.style.height = `${next}px`;
     }
     onLayoutChange?.();
-  }, [text, attachments.length, onLayoutChange]);
+  }, [text, attachments.length, modelOpen, connectorOpen, onLayoutChange]);
 
   function submitDraft() {
     if (streaming) {
@@ -131,7 +131,7 @@ export default function Composer({
     (model) => modelOptionValue(model) === selectedModel,
   );
   const selectedModelLabel = selectedModelRow
-    ? modelOptionLabel(selectedModelRow)
+    ? selectedModelRow.name || selectedModelRow.model
     : "自动";
 
   const submitMode = streaming ? (hasContent ? "queue" : "stop") : "send";

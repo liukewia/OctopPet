@@ -44,9 +44,18 @@ export default function ChatWindow() {
       {chat.expanded || chat.error ? (
         <div className="chat-body">
           {chat.error ? (
-            <p className="chat-error" role="alert">
-              {chat.error}
-            </p>
+            <div className="chat-error" role="alert">
+              <p>{chat.error}</p>
+              {chat.canRetryInit ? (
+                <button
+                  type="button"
+                  className="chat-error-retry"
+                  onClick={() => void chat.retryInitialize()}
+                >
+                  重试
+                </button>
+              ) : null}
+            </div>
           ) : null}
           <MessageList
             messages={chat.messages}
@@ -81,7 +90,9 @@ export default function ChatWindow() {
         onSend={chat.sendMessage}
         onQueue={chat.queueMessage}
         onStop={chat.stopStream}
-        onLayoutChange={chat.expanded ? undefined : chat.fitCompactWindow}
+        onLayoutChange={
+          chat.expanded ? undefined : () => chat.fitCompactWindow()
+        }
       />
       <p className="chat-footnote">内容由 AI 生成，仅供参考</p>
       {chat.expanded ? <ChatResizeChrome /> : null}

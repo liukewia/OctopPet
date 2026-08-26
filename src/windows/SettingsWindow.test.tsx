@@ -147,6 +147,15 @@ describe("SettingsWindow", () => {
       }),
     );
     expect(mocks.setSecret).toHaveBeenCalledWith("password", "new-password");
+    expect(mocks.login).toHaveBeenCalledWith(
+      "https://new.example",
+      "new-user",
+      "new-password",
+    );
+    expect(mocks.setSecret).toHaveBeenCalledWith(
+      "access_token",
+      "hidden-access-token",
+    );
     expect(mocks.reloadHotkeys).toHaveBeenCalledOnce();
     expect(mocks.emitAuthUpdated).toHaveBeenCalledOnce();
     expect(await screen.findByText("设置已保存")).toBeInTheDocument();
@@ -192,6 +201,7 @@ describe("SettingsWindow", () => {
     expect(mocks.patchConfig.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.setSecret.mock.invocationCallOrder[0],
     );
+    expect(mocks.setSecret).toHaveBeenCalledWith("password", "secret-password");
     expect(mocks.setSecret).toHaveBeenCalledWith(
       "access_token",
       "hidden-access-token",

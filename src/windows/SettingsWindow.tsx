@@ -10,6 +10,7 @@ import {
   MASCOT_SRC,
   normalizeBaseUrl,
 } from "../lib/configLogic";
+import { version as appVersion } from "../../package.json";
 import { login } from "../lib/octopHttp";
 import { tauriApi } from "../lib/tauriApi";
 import { hideCurrentWindow } from "../lib/tauriWindowApi";
@@ -131,6 +132,26 @@ export default function SettingsWindow() {
     }
   }
 
+  async function persistCredentials(
+    normalizedBaseUrl: string,
+    extra: Partial<{
+      shortcutOpenPet: string;
+      shortcutOpenHome: string;
+    }> = {},
+  ) {
+    const patch = {
+      baseUrl: normalizedBaseUrl,
+      username,
+      mascotId,
+      ...extra,
+    };
+    await tauriApi.patchConfig(patch);
+    if (username.trim()) {
+      await tauriApi.setSecret("password", password);
+    }
+    return patch;
+  }
+
   async function saveSettings() {
     if (!config) return;
 
@@ -138,27 +159,38 @@ export default function SettingsWindow() {
     setNotice(null);
     try {
       const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
-      const patch = {
-        baseUrl: normalizedBaseUrl,
-        username,
-        mascotId,
+      const patch = await persistCredentials(normalizedBaseUrl, {
         shortcutOpenPet:
           shortcutOpenPet.trim() || DEFAULT_APP_CONFIG.shortcutOpenPet,
         shortcutOpenHome:
           shortcutOpenHome.trim() || DEFAULT_APP_CONFIG.shortcutOpenHome,
-      };
-      await tauriApi.patchConfig(patch);
-      if (username.trim()) {
-        await tauriApi.setSecret("password", password);
-      }
+      });
       await tauriApi.reloadHotkeys();
       const nextConfig = { ...config, ...patch };
       setConfig(nextConfig);
       setBaseUrl(normalizedBaseUrl);
-      setShortcutOpenPet(patch.shortcutOpenPet);
-      setShortcutOpenHome(patch.shortcutOpenHome);
-      await tauriApi.emitAuthUpdated();
-      setNotice({ kind: "success", text: "设置已保存" });
+      setShortcutOpenPet(
+        patch.shortcutOpenPet || DEFAULT_APP_CONFIG.shortcutOpenPet,
+      );
+      setShortcutOpenHome(
+        patch.shortcutOpenHome || DEFAULT_APP_CONFIG.shortcutOpenHome,
+      );
+      try {
+        const { access_token } = await login(
+          normalizedBaseUrl,
+          username,
+          password,
+        );
+        await tauriApi.setSecret("access_token", access_token);
+        await tauriApi.emitAuthUpdated();
+        setNotice({ kind: "success", text: "设置已保存" });
+      } catch (loginError) {
+        await tauriApi.emitAuthUpdated();
+        setNotice({
+          kind: "error",
+          text: `设置已保存，但连接失败：${errorMessage(loginError)}`,
+        });
+      }
     } catch (error) {
       setNotice({
         kind: "error",
@@ -179,8 +211,7 @@ export default function SettingsWindow() {
         username,
         password,
       );
-      const patch = { baseUrl: normalizedBaseUrl, username, mascotId };
-      await tauriApi.patchConfig(patch);
+      const patch = await persistCredentials(normalizedBaseUrl);
       await tauriApi.setSecret("access_token", access_token);
       if (config) setConfig({ ...config, ...patch });
       setBaseUrl(normalizedBaseUrl);
@@ -207,7 +238,10 @@ export default function SettingsWindow() {
               role="tab"
               aria-selected={tab === item.id}
               className={`settings-tab${tab === item.id ? " is-active" : ""}`}
-              onClick={() => setTab(item.id)}
+              onClick={() => {
+                setTab(item.id);
+                setNotice(null);
+              }}
             >
               {item.label}
             </button>
@@ -237,7 +271,8 @@ export default function SettingsWindow() {
                 <label htmlFor="base-url">服务地址</label>
                 <input
                   id="base-url"
-                  type="url"
+                  type="text"
+                  inputMode="url"
                   value={baseUrl}
                   onChange={(event) => setBaseUrl(event.currentTarget.value)}
                   placeholder="http://localhost:8088"
@@ -281,6 +316,7 @@ export default function SettingsWindow() {
                       role="option"
                       aria-selected={selected}
                       className={`mascot-option${selected ? " is-selected" : ""}`}
+                      aria-label={option.label}
                       onClick={() => void chooseMascot(option.id)}
                     >
                       <img
@@ -351,7 +387,7 @@ export default function SettingsWindow() {
               </div>
             </div>
             <p className="settings-hint">
-              点击输入框后按下组合键即可录制；按 Esc 取消，Backspace 清除。
+              点击后按下组合键即可录制；按 Esc 取消，Backspace 清除。
             </p>
             <div className="settings-footer">
               {notice ? (
@@ -388,7 +424,7 @@ export default function SettingsWindow() {
               </div>
               <div className="settings-row">
                 <span>版本</span>
-                <span>V0.1.0</span>
+                <span>V{appVersion}</span>
               </div>
             </div>
             {notice ? (

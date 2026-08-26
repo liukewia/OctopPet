@@ -60,4 +60,28 @@ describe("Composer", () => {
       mcpServers: [],
     });
   });
+
+  it("opens the model menu and notifies layout change", () => {
+    const onLayoutChange = vi.fn();
+    render(
+      <Composer
+        agents={agents}
+        agentId="agent-1"
+        onAgentChange={vi.fn()}
+        models={[{ provider_name: "openai", model: "gpt-4o", name: "GPT-4o" }]}
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        onLayoutChange={onLayoutChange}
+      />,
+    );
+
+    onLayoutChange.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "选择模型" }));
+
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitemradio", { name: "openai / GPT-4o" }),
+    ).toBeInTheDocument();
+    expect(onLayoutChange).toHaveBeenCalled();
+  });
 });

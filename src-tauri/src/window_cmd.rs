@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{window::Color, AppHandle, Emitter, Manager, PhysicalPosition};
+use tauri::{
+    window::Color, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow,
+};
 use tauri_plugin_opener::OpenerExt;
 
 /// Logical pixels between the chat window bottom edge and the work-area bottom.
@@ -102,6 +104,106 @@ pub fn home_url(base_url: &str) -> Result<String, String> {
         return Err("base URL cannot be empty".into());
     }
     Ok(format!("{base_url}/"))
+}
+
+/// Keep the top-left origin's x, and shift y so the bottom edge stays put.
+pub fn bottom_anchored_position(
+    old_position: (i32, i32),
+    old_outer: (u32, u32),
+    new_outer: (u32, u32),
+) -> (i32, i32) {
+    let dy = old_outer.1 as i32 - new_outer.1 as i32;
+    (old_position.0, old_position.1 + dy)
+}
+
+fn apply_bottom_anchored_size_fallback(
+    window: &WebviewWindow,
+    width: f64,
+    height: f64,
+) -> Result<(), String> {
+    let old_outer = window
+        .outer_size()
+        .map_err(|error| format!("failed to read window size: {error}"))?;
+    let old_pos = window
+        .outer_position()
+        .map_err(|error| format!("failed to read window position: {error}"))?;
+    window
+        .set_size(LogicalSize::new(width, height))
+        .map_err(|error| format!("failed to resize window: {error}"))?;
+    let new_outer = window
+        .outer_size()
+        .map_err(|error| format!("failed to read window size: {error}"))?;
+    let (x, y) = bottom_anchored_position(
+        (old_pos.x, old_pos.y),
+        (old_outer.width, old_outer.height),
+        (new_outer.width, new_outer.height),
+    );
+    if x != old_pos.x || y != old_pos.y {
+        window
+            .set_position(PhysicalPosition::new(x, y))
+            .map_err(|error| format!("failed to position window: {error}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn apply_bottom_anchored_size_macos(
+    window: &WebviewWindow,
+    width: f64,
+    height: f64,
+    animate: bool,
+) -> Result<(), String> {
+    let scale = window
+        .scale_factor()
+        .map_err(|error| format!("failed to read scale factor: {error}"))?;
+    let inner = window
+        .inner_size()
+        .map_err(|error| format!("failed to read inner size: {error}"))?;
+    let outer = window
+        .outer_size()
+        .map_err(|error| format!("failed to read window size: {error}"))?;
+    let extra_w = (outer.width as f64 - inner.width as f64) / scale;
+    let extra_h = (outer.height as f64 - inner.height as f64) / scale;
+    let frame_w = width + extra_w;
+    let frame_h = height + extra_h;
+    window
+        .with_webview(move |webview| {
+            use objc2_app_kit::NSWindow;
+            unsafe {
+                let ns_window: &NSWindow = &*webview.ns_window().cast();
+                let mut frame = ns_window.frame();
+                // AppKit origin is bottom-left, so keeping origin.y pins the bottom edge.
+                frame.size.width = frame_w;
+                frame.size.height = frame_h;
+                ns_window.setFrame_display_animate(frame, true, animate);
+            }
+        })
+        .map_err(|error| format!("failed to resize window: {error}"))
+}
+
+/// Resize the calling window while keeping its bottom edge in place.
+/// On macOS this uses a single `NSWindow` frame change (optionally animated).
+#[tauri::command]
+pub fn apply_bottom_anchored_size(
+    window: WebviewWindow,
+    width: f64,
+    height: f64,
+    animate: Option<bool>,
+) -> Result<(), String> {
+    if width < 1.0 || height < 1.0 {
+        return Err("window size must be positive".into());
+    }
+    let animate = animate.unwrap_or(false);
+    #[cfg(target_os = "macos")]
+    {
+        match apply_bottom_anchored_size_macos(&window, width, height, animate) {
+            Ok(()) => return Ok(()),
+            Err(error) => eprintln!("macos bottom-anchored resize failed: {error}"),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = animate;
+    apply_bottom_anchored_size_fallback(&window, width, height)
 }
 
 /// Horizontally center a window and pin it near the bottom of the work area.

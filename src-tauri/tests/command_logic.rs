@@ -8,8 +8,8 @@ use octop_pet_lib::{
     config_cmd::{load_from_path, patch_at_path, save_to_path, select_mascot, AppConfig},
     secrets_cmd::{secret_account, validate_secret_key},
     window_cmd::{
-        bottom_centered_position, centered_position, home_url, should_hide_on_close,
-        CHAT_BOTTOM_GAP_LOGICAL,
+        bottom_anchored_position, bottom_centered_position, centered_position, home_url,
+        should_hide_on_close, CHAT_BOTTOM_GAP_LOGICAL,
     },
 };
 
@@ -170,6 +170,18 @@ fn bottom_centered_position_is_clamped_to_monitor_work_area() {
     assert_eq!(
         bottom_centered_position((420, 560), (-1440, 25), (1440, 875), 96),
         (-930, 244) // -1440+(1440-420)/2=-930, 25+875-560-96=244
+    );
+}
+
+#[test]
+fn bottom_anchored_resize_keeps_the_bottom_edge() {
+    assert_eq!(
+        bottom_anchored_position((400, 300), (400, 560), (400, 160)),
+        (400, 700) // grow-shrink: y += 560-160
+    );
+    assert_eq!(
+        bottom_anchored_position((100, 500), (400, 160), (400, 560)),
+        (100, 100) // expand upward: y += 160-560
     );
 }
 

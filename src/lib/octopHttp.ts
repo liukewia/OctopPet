@@ -17,11 +17,45 @@ export {
   modelOptionValue,
   modelRef,
 } from "./octopTypes";
+export function parseApiErrorMessage(body: string): string | null {
+  const trimmed = body.trim();
+  if (!trimmed) return null;
+  try {
+    const data = JSON.parse(trimmed) as {
+      detail?: unknown;
+      message?: unknown;
+      error?: { message?: unknown } | string;
+    };
+    if (data && typeof data === "object") {
+      if (
+        data.error &&
+        typeof data.error === "object" &&
+        typeof data.error.message === "string" &&
+        data.error.message.trim()
+      ) {
+        return data.error.message.trim();
+      }
+      if (typeof data.detail === "string" && data.detail.trim()) {
+        return data.detail.trim();
+      }
+      if (typeof data.message === "string" && data.message.trim()) {
+        return data.message.trim();
+      }
+      if (typeof data.error === "string" && data.error.trim()) {
+        return data.error.trim();
+      }
+    }
+  } catch {
+    if (trimmed.length < 160 && !trimmed.startsWith("{")) return trimmed;
+  }
+  return null;
+}
+
 export class OctopHttpError extends Error {
   status: number;
   body: string;
   constructor(status: number, body: string) {
-    super(`HTTP ${status}: ${body}`);
+    super(parseApiErrorMessage(body) || `HTTP ${status}: ${body}`);
     this.status = status;
     this.body = body;
   }

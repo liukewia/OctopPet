@@ -93,6 +93,10 @@ class FakeWebSocket {
 
   close() {
     this.readyState = WebSocket.CLOSED;
+  }
+
+  emitClose() {
+    this.readyState = WebSocket.CLOSED;
     this.onclose?.();
   }
 
@@ -189,6 +193,35 @@ describe("ChatWindow", () => {
     rect.mockRestore();
   });
 
+  it("没有令牌但有密码时会静默登录后继续初始化", async () => {
+    mocks.getSecret.mockImplementation(async (key: string) =>
+      key === "password" ? "secret-password" : null,
+    );
+    mocks.login.mockResolvedValue({
+      access_token: "token-from-password",
+      expires_in: 3600,
+    });
+
+    render(<ChatWindow />);
+
+    expect(
+      await screen.findByRole("combobox", { name: "选择代理" }),
+    ).toBeInTheDocument();
+    expect(mocks.login).toHaveBeenCalledWith(
+      "https://octop.example",
+      "juba",
+      "secret-password",
+    );
+    expect(mocks.setSecret).toHaveBeenCalledWith(
+      "access_token",
+      "token-from-password",
+    );
+    expect(mocks.listAgents).toHaveBeenCalledWith(
+      "https://octop.example",
+      "token-from-password",
+    );
+  });
+
   it("缺少访问令牌时提示并打开设置", async () => {
     mocks.getSecret.mockResolvedValue(null);
 
@@ -202,9 +235,10 @@ describe("ChatWindow", () => {
 
   it("设置更新事件到达后重新初始化聊天", async () => {
     let authUpdated: (() => void) | undefined;
-    mocks.getSecret
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce("token-after-settings");
+    let token: string | null = null;
+    mocks.getSecret.mockImplementation(async (key: string) =>
+      key === "access_token" ? token : null,
+    );
     mocks.listenAuthUpdated.mockImplementation(async (handler: () => void) => {
       authUpdated = handler;
       return vi.fn();
@@ -214,6 +248,7 @@ describe("ChatWindow", () => {
 
     expect(await screen.findByText("需要先完成登录设置")).toBeInTheDocument();
     await waitFor(() => expect(authUpdated).toBeDefined());
+    token = "token-after-settings";
     authUpdated?.();
 
     expect(
@@ -433,6 +468,51 @@ describe("ChatWindow", () => {
     });
   });
 
+  it("新建会话立即收起消息区，不显示空的加载态", async () => {
+    mocks.loadConfig.mockResolvedValue({
+      ...DEFAULT_APP_CONFIG,
+      baseUrl: "https://octop.example",
+      username: "juba",
+      lastAgentId: "a1",
+      threadIdByAgent: { a1: "thread-1" },
+    });
+    mocks.getHistory.mockResolvedValue({
+      messages: [
+        { role: "user", content: "旧问题" },
+        { role: "assistant", content: "旧回答" },
+      ],
+    });
+    let finishCreate: (value: {
+      thread_id: string;
+      session_key: string;
+    }) => void = () => undefined;
+    mocks.createThread.mockReturnValue(
+      new Promise((resolve) => {
+        finishCreate = resolve;
+      }),
+    );
+
+    render(<ChatWindow />);
+    expect(await screen.findByText("旧问题")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
+
+    expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
+    expect(screen.queryByText("正在加载对话…")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "聊天消息" }),
+    ).not.toBeInTheDocument();
+
+    finishCreate({ thread_id: "thread-fresh", session_key: "session-fresh" });
+    await waitFor(() =>
+      expect(mocks.createThread).toHaveBeenCalledWith(
+        "https://octop.example",
+        "token-1",
+        "a1",
+      ),
+    );
+  });
+
   it("助手消息提供复制/重试/语音，重试会重新发起流式请求", async () => {
     mocks.loadConfig.mockResolvedValue({
       ...DEFAULT_APP_CONFIG,
@@ -525,6 +605,14 @@ describe("ChatWindow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
+    await waitFor(() =>
+      expect(mocks.applyBottomAnchoredSize).toHaveBeenCalledWith({
+        width: 400,
+        height: 560,
+        animate: true,
+      }),
+    );
+
     const socket = FakeWebSocket.instances[0];
     socket.open();
     expect(JSON.parse(socket.sent[0])).toMatchObject({
@@ -545,6 +633,20 @@ describe("ChatWindow", () => {
           ],
         },
       ],
+    });
+
+    socket.message({ type: "token", content: "看到了" });
+    socket.message({ type: "done" });
+    expect(await screen.findByRole("button", { name: "重试" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(2));
+    const retrySocket = FakeWebSocket.instances[1];
+    retrySocket.open();
+    expect(JSON.parse(retrySocket.sent[0])).toMatchObject({
+      type: "user_turn",
+      text: "看图",
+      model: "openai/gpt-4o",
+      mcp_servers: ["github"],
     });
   });
 
@@ -591,5 +693,24 @@ describe("ChatWindow", () => {
       text: "排队的第二句",
       thread_id: "thread-1",
     });
+
+    socket.emitClose();
+    expect(screen.queryByText("连接意外断开")).not.toBeInTheDocument();
+  });
+
+  it("连接失败后显示重试并重新初始化", async () => {
+    mocks.listAgents
+      .mockRejectedValueOnce(new Error("无法连接服务，请检查地址是否可访问"))
+      .mockResolvedValueOnce([{ id: "a1", name: "助手一", state: "online" }]);
+
+    render(<ChatWindow />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法连接服务");
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    expect(
+      await screen.findByRole("combobox", { name: "选择代理" }),
+    ).toBeInTheDocument();
+    expect(mocks.listAgents).toHaveBeenCalledTimes(2);
   });
 });

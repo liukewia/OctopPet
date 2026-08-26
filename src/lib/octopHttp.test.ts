@@ -4,6 +4,8 @@ import {
   listAgents,
   createThread,
   extractTextContent,
+  parseApiErrorMessage,
+  OctopHttpError,
   buildUserMessageContent,
   listResolvedModels,
   listConnectors,
@@ -93,6 +95,21 @@ describe("octopHttp", () => {
     );
     const t = await createThread("https://h.example", "tok", "a1");
     expect(t.thread_id).toBe("th1");
+  });
+
+  it("parseApiErrorMessage reads Octop error.message", () => {
+    expect(
+      parseApiErrorMessage(
+        '{"error":{"code":"AUTH_FAILED","message":"认证失败。","details":{}}}',
+      ),
+    ).toBe("认证失败。");
+    expect(parseApiErrorMessage('{"detail":"not found"}')).toBe("not found");
+    expect(
+      new OctopHttpError(
+        401,
+        '{"error":{"code":"AUTH_FAILED","message":"认证失败。"}}',
+      ).message,
+    ).toBe("认证失败。");
   });
 
   it("extractTextContent flattens string or text parts", () => {

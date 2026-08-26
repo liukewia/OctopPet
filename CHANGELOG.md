@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat window height no longer snaps when starting a new conversation or sending the first message; resize stays bottom-anchored
+- Model and connector menus are no longer clipped or covered by the chat card
+- Queued follow-up turns no longer mark the finished reply as “连接意外断开”
+- Saving settings now logs in and stores the token; testing connection also stores the password
+- Chat can silently log in with the saved password when the access token is missing
+- HTTP errors show the server message (e.g. “认证失败。”) instead of raw JSON
+- Connection failures in chat offer a retry button
+- Retrying an assistant turn reuses the original text, attachments, and model
+- Settings leftover notices no longer linger on other tabs; shortcut hint and mascot labels are clearer
+- Tray “检查更新” spacing and pet menu “与 Octop 对话” wording
+
 ### Added
 
 - `hooks/useChatController.ts`, `hooks/useWindowChrome.ts` — chat/settings window logic extracted from UI
