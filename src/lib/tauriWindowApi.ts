@@ -4,6 +4,8 @@ import {
   getCurrentWindow,
 } from "@tauri-apps/api/window";
 
+import { tauriApi } from "./tauriApi";
+
 export type ResizeEdge = "South" | "East" | "SouthEast";
 
 export function getWindowLabel(): string {
@@ -17,20 +19,13 @@ export async function hideCurrentWindow(): Promise<void> {
 export async function applyBottomAnchoredSize(size: {
   width: number;
   height: number;
+  animate?: boolean;
 }): Promise<void> {
-  const win = getCurrentWindow();
-  const [oldSize, pos] = await Promise.all([
-    win.outerSize(),
-    win.outerPosition(),
-  ]);
-  await win.setSize(new LogicalSize(size.width, size.height));
-  const newSize = await win.outerSize();
-  const dy = oldSize.height - newSize.height;
-  if (dy !== 0) {
-    await win
-      .setPosition(new PhysicalPosition(pos.x, pos.y + dy))
-      .catch(() => undefined);
-  }
+  await tauriApi.applyBottomAnchoredSize(
+    size.width,
+    size.height,
+    Boolean(size.animate),
+  );
 }
 
 export async function setCurrentWindowResizable(

@@ -22,7 +22,7 @@ Octop Pet is a **desktop client** for a remote Octop server. Security responsibi
 
 ### Octop Pet (this repo)
 
-- Passwords and access tokens are stored in the **OS keyring** (macOS Keychain / Windows Credential Manager), not in plain-text config files
+- Passwords and access tokens are stored in the **OS keyring** (macOS Keychain / Windows Credential Manager), not in `config.json`. Debug/`tauri dev` builds use a 0600 file under the app data directory instead, so unsigned rebuilds do not trigger Keychain ACL prompts
 - `config.json` holds non-secret settings only (`baseUrl`, username, mascot, thread map, window position, shortcuts)
 - HTTP/WebSocket calls go to the user-configured Octop base URL — the app does not phone home to third parties
 - Never commit `.env` files, signing certificates (`.p12`, `.pfx`), or captured tokens in issues or PRs

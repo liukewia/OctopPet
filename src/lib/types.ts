@@ -12,6 +12,8 @@ export interface AppConfig {
   shortcutOpenPet: string;
   /** Tauri accelerator, e.g. CmdOrCtrl+Shift+H */
   shortcutOpenHome: string;
+  /** When true, chat/settings stay visible after clicking another app. */
+  keepWindowsVisible: boolean;
 }
 
 export interface AgentSummary {

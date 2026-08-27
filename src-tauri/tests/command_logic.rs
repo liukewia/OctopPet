@@ -6,10 +6,14 @@ use std::{
 
 use octop_pet_lib::{
     config_cmd::{load_from_path, patch_at_path, save_to_path, select_mascot, AppConfig},
-    secrets_cmd::{secret_account, validate_secret_key},
+    secrets_cmd::{
+        delete_secret_from_file, get_secret_from_file, secret_account, set_secret_in_file,
+        validate_secret_key,
+    },
     window_cmd::{
-        bottom_centered_position, centered_position, home_url, should_hide_on_close,
-        CHAT_BOTTOM_GAP_LOGICAL,
+        bottom_anchored_position, bottom_centered_position, centered_position, chat_position,
+        home_url, should_hide_on_close, should_hide_on_unfocus, CHAT_BOTTOM_GAP_LOGICAL,
+        RESIZE_ANIMATION_DURATION,
     },
 };
 
@@ -27,6 +31,7 @@ fn app_config_defaults_match_the_frontend() {
             pet_y: None,
             shortcut_open_pet: "CmdOrCtrl+Shift+O".into(),
             shortcut_open_home: "CmdOrCtrl+Shift+H".into(),
+            keep_windows_visible: true,
         }
     );
 }
@@ -43,6 +48,7 @@ fn app_config_serializes_with_frontend_field_names() {
     assert!(value.get("petY").is_some());
     assert!(value.get("shortcutOpenPet").is_some());
     assert!(value.get("shortcutOpenHome").is_some());
+    assert!(value.get("keepWindowsVisible").is_some());
 }
 
 #[test]
@@ -116,7 +122,23 @@ fn config_patch_updates_only_owned_fields() {
             ..original
         }
     );
+    patch_at_path(&path, serde_json::json!({ "keepWindowsVisible": false })).unwrap();
+    assert!(!load_from_path(&path).unwrap().keep_windows_visible);
     assert!(patch_at_path(&path, serde_json::json!({ "unknown": true })).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn keep_windows_visible_defaults_when_missing_from_file() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("octop-pet-keep-visible-{unique}"));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.json");
+    fs::write(&path, r#"{"baseUrl":"https://x.example"}"#).unwrap();
+    assert!(load_from_path(&path).unwrap().keep_windows_visible);
     fs::remove_dir_all(dir).unwrap();
 }
 
@@ -133,10 +155,42 @@ fn secrets_are_scoped_by_username_and_restricted_to_known_keys() {
 }
 
 #[test]
+fn debug_secrets_file_round_trips_without_keyring() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("octop-pet-secrets-{unique}"));
+    let path = dir.join("dev-secrets.json");
+
+    assert_eq!(get_secret_from_file(&path, "alice:password").unwrap(), None);
+    set_secret_in_file(&path, "alice:password", "s3cret").unwrap();
+    assert_eq!(
+        get_secret_from_file(&path, "alice:password")
+            .unwrap()
+            .as_deref(),
+        Some("s3cret")
+    );
+    delete_secret_from_file(&path, "alice:password").unwrap();
+    assert_eq!(get_secret_from_file(&path, "alice:password").unwrap(), None);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn chat_and_settings_close_requests_are_hidden() {
     assert!(should_hide_on_close("chat"));
     assert!(should_hide_on_close("settings"));
     assert!(!should_hide_on_close("pet"));
+}
+
+#[test]
+fn chat_and_settings_hide_on_unfocus_only_when_setting_is_off() {
+    assert!(!should_hide_on_unfocus("chat", true));
+    assert!(!should_hide_on_unfocus("settings", true));
+    assert!(!should_hide_on_unfocus("pet", true));
+    assert!(should_hide_on_unfocus("chat", false));
+    assert!(should_hide_on_unfocus("settings", false));
+    assert!(!should_hide_on_unfocus("pet", false));
 }
 
 #[test]
@@ -146,6 +200,32 @@ fn home_url_has_exactly_one_trailing_slash() {
         "https://octop.example/"
     );
     assert!(home_url("   ").is_err());
+}
+
+#[test]
+fn chat_position_prefers_right_and_falls_back_to_left() {
+    assert_eq!(
+        chat_position((100, 80), (160, 160), (420, 560), (0, 0), (1200, 900)),
+        (260, 80)
+    );
+    assert_eq!(
+        chat_position((1050, 80), (160, 160), (420, 560), (0, 0), (1200, 900)),
+        (630, 80)
+    );
+}
+
+#[test]
+fn chat_position_is_clamped_to_monitor_work_area() {
+    assert_eq!(
+        chat_position(
+            (-1700, -200),
+            (160, 160),
+            (420, 560),
+            (-1440, 25),
+            (1440, 875),
+        ),
+        (-1440, 25)
+    );
 }
 
 #[test]
@@ -170,6 +250,24 @@ fn bottom_centered_position_is_clamped_to_monitor_work_area() {
     assert_eq!(
         bottom_centered_position((420, 560), (-1440, 25), (1440, 875), 96),
         (-930, 244) // -1440+(1440-420)/2=-930, 25+875-560-96=244
+    );
+}
+
+#[test]
+fn resize_animation_is_slower_than_appkit_default() {
+    assert!(RESIZE_ANIMATION_DURATION > 0.2);
+    assert!(RESIZE_ANIMATION_DURATION <= 0.45);
+}
+
+#[test]
+fn bottom_anchored_resize_keeps_the_bottom_edge() {
+    assert_eq!(
+        bottom_anchored_position((400, 300), (400, 560), (400, 160)),
+        (400, 700) // grow-shrink: y += 560-160
+    );
+    assert_eq!(
+        bottom_anchored_position((100, 500), (400, 160), (400, 560)),
+        (100, 100) // expand upward: y += 160-560
     );
 }
 

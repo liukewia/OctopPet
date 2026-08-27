@@ -15,11 +15,13 @@ import {
 } from "../lib/chatStream";
 import {
   CHAT_COMPACT_MIN_HEIGHT,
-  CHAT_EXPANDED_HEIGHT,
+  CHAT_INITIAL_HEIGHT,
   CHAT_MIN_HEIGHT,
   CHAT_MIN_WIDTH,
   CHAT_WIDTH,
+  chatWindowWidth,
   chatErrorText,
+  compactWindowHeight,
   historyMessages,
   nextChatMessageId,
 } from "../lib/chatHelpers";
@@ -78,6 +80,8 @@ export function useChatController() {
   const rootRef = useRef<HTMLElement | null>(null);
   const wasExpandedRef = useRef(false);
   const lastCompactHeightRef = useRef(0);
+  const [layoutExpanded, setLayoutExpanded] = useState(false);
+  const layoutExpandedRef = useRef(false);
 
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [models, setModels] = useState<ResolvedModel[]>([]);
@@ -103,6 +107,10 @@ export function useChatController() {
   const socketRef = useRef<WebSocket | null>(null);
   const assistantIdRef = useRef("");
   const streamFinishedRef = useRef(true);
+  const settleStreamRef = useRef<(() => void) | null>(null);
+  const retryTurnsRef = useRef<
+    Record<string, { text: string; options: ComposerSendOptions }>
+  >({});
   const loadSequenceRef = useRef(0);
   const mountedRef = useRef(true);
   const connectionRef = useRef(connection);
@@ -112,7 +120,11 @@ export function useChatController() {
   const messagesRef = useRef<ChatMessage[]>([]);
   messagesRef.current = messages;
 
-  const expanded = messages.length > 0 || loadingHistory || queue.length > 0;
+  const expanded = messages.length > 0 || queue.length > 0;
+  layoutExpandedRef.current = layoutExpanded;
+  if (expanded && !layoutExpanded) {
+    setLayoutExpanded(true);
+  }
 
   const requireSettings = useCallback(async () => {
     tokenRef.current = "";
@@ -171,6 +183,8 @@ export function useChatController() {
   const stopStream = useCallback(() => {
     const socket = socketRef.current;
     const thread = threadRef.current;
+    settleStreamRef.current?.();
+    settleStreamRef.current = null;
     streamFinishedRef.current = true;
     if (socket && socket.readyState === WebSocket.OPEN && thread) {
       socket.send(JSON.stringify(buildCancelPayload(thread.id)));
@@ -315,20 +329,34 @@ export function useChatController() {
 
   const initialize = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
+    threadRef.current = null;
     setConnection("loading");
     setError("");
     try {
-      const [config, token] = await Promise.all([
+      const [config, storedToken] = await Promise.all([
         tauriApi.loadConfig(),
         tauriApi.getSecret("access_token"),
       ]);
       if (sequence !== loadSequenceRef.current || !mountedRef.current) return;
       configRef.current = config;
 
+      let token = storedToken;
       if (!token) {
-        setNeedsSettings(true);
-        setConnection("disconnected");
-        return;
+        const password = await tauriApi.getSecret("password");
+        if (!config.username.trim() || !password) {
+          setNeedsSettings(true);
+          setConnection("disconnected");
+          return;
+        }
+        try {
+          const result = await login(config.baseUrl, config.username, password);
+          await tauriApi.setSecret("access_token", result.access_token);
+          token = result.access_token;
+        } catch {
+          setNeedsSettings(true);
+          setConnection("disconnected");
+          return;
+        }
       }
 
       tokenRef.current = token;
@@ -405,6 +433,8 @@ export function useChatController() {
       mountedRef.current = false;
       loadSequenceRef.current += 1;
       streamFinishedRef.current = true;
+      settleStreamRef.current?.();
+      settleStreamRef.current = null;
       socketRef.current?.close();
       socketRef.current = null;
       unlisten?.();
@@ -455,6 +485,11 @@ export function useChatController() {
 
       stopSpeaking();
       assistantIdRef.current = assistantId;
+      let settled = false;
+      const settle = () => {
+        settled = true;
+      };
+      settleStreamRef.current = settle;
       streamFinishedRef.current = false;
       flushAfterStreamRef.current = true;
       setConnection("streaming");
@@ -469,8 +504,10 @@ export function useChatController() {
       let status = beginStreamStatus();
 
       const finish = (streamError?: string) => {
-        if (streamFinishedRef.current) return;
+        if (settled) return;
+        settle();
         streamFinishedRef.current = true;
+        if (settleStreamRef.current === settle) settleStreamRef.current = null;
         setStreamStatus(idleStreamStatus());
         setMessages((current) =>
           current.map((message) =>
@@ -485,8 +522,13 @@ export function useChatController() {
           ),
         );
         setConnection(streamError ? "disconnected" : "connected");
-        socketRef.current = null;
-        socket.close();
+        if (socketRef.current === socket) socketRef.current = null;
+        if (
+          socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING
+        ) {
+          socket.close();
+        }
       };
 
       socket.onopen = () => {
@@ -524,7 +566,7 @@ export function useChatController() {
       };
       socket.onerror = () => finish("流式连接失败");
       socket.onclose = () => {
-        if (!streamFinishedRef.current) finish("连接意外断开");
+        if (!settled) finish("连接意外断开");
       };
     },
     [agentId, stopSpeaking],
@@ -540,6 +582,7 @@ export function useChatController() {
           : "");
       const userId = nextChatMessageId("user");
       const assistantId = nextChatMessageId("assistant");
+      retryTurnsRef.current[assistantId] = { text, options };
       setMessages((current) => [
         ...current,
         { id: userId, role: "user", content: displayText },
@@ -608,16 +651,20 @@ export function useChatController() {
       );
       if (index < 0) return;
 
-      let prompt = "";
-      for (let i = index - 1; i >= 0; i -= 1) {
-        if (current[i].role === "user" && current[i].content.trim()) {
-          prompt = current[i].content;
-          break;
+      const stored = retryTurnsRef.current[assistantMessageId];
+      let prompt = stored?.text ?? "";
+      if (!prompt) {
+        for (let i = index - 1; i >= 0; i -= 1) {
+          if (current[i].role === "user" && current[i].content.trim()) {
+            prompt = current[i].content;
+            break;
+          }
         }
       }
       if (!prompt) return;
 
       const nextAssistantId = nextChatMessageId("assistant");
+      if (stored) retryTurnsRef.current[nextAssistantId] = stored;
       setMessages([
         ...current.slice(0, index),
         {
@@ -627,7 +674,7 @@ export function useChatController() {
           pending: true,
         },
       ]);
-      startAssistantStream(prompt, nextAssistantId);
+      startAssistantStream(prompt, nextAssistantId, stored?.options);
     },
     [connection, startAssistantStream],
   );
@@ -662,47 +709,67 @@ export function useChatController() {
 
   useEffect(() => () => stopSpeaking(), [stopSpeaking]);
 
-  const fitCompactWindow = useCallback(() => {
-    const root = rootRef.current;
-    if (!root || expanded || needsSettings) return;
-    const height = Math.max(
-      CHAT_COMPACT_MIN_HEIGHT,
-      Math.ceil(root.getBoundingClientRect().height),
-    );
-    if (height === lastCompactHeightRef.current) return;
-    lastCompactHeightRef.current = height;
-    void applyBottomAnchoredSize({ width: CHAT_WIDTH, height });
-  }, [expanded, needsSettings]);
+  const fitCompactWindow = useCallback(
+    (animate = false) => {
+      const root = rootRef.current;
+      if (!root || expanded || layoutExpandedRef.current || needsSettings)
+        return;
+      const needed = compactWindowHeight(root, CHAT_COMPACT_MIN_HEIGHT);
+      const current = Math.ceil(window.innerHeight);
+      if (needed <= current) return;
+      lastCompactHeightRef.current = needed;
+      void applyBottomAnchoredSize({
+        width: chatWindowWidth(),
+        height: needed,
+        ...(animate ? { animate: true } : {}),
+      });
+    },
+    [expanded, needsSettings],
+  );
 
   useLayoutEffect(() => {
-    document.documentElement.classList.toggle("chat-expanded", expanded);
-    void setCurrentWindowResizable(expanded);
-    void clearCurrentWindowMaxSize();
-    void setCurrentWindowMinSize(
-      CHAT_MIN_WIDTH,
-      expanded ? CHAT_MIN_HEIGHT : CHAT_COMPACT_MIN_HEIGHT,
-    );
+    document.documentElement.classList.toggle("chat-expanded", layoutExpanded);
+    return () => document.documentElement.classList.remove("chat-expanded");
+  }, [layoutExpanded]);
 
-    if (expanded || needsSettings) {
-      if (!wasExpandedRef.current) {
+  useLayoutEffect(() => {
+    void setCurrentWindowResizable(true);
+    void clearCurrentWindowMaxSize();
+
+    let cancelled = false;
+    async function syncWindow() {
+      await setCurrentWindowMinSize(CHAT_MIN_WIDTH, CHAT_MIN_HEIGHT);
+      if (cancelled) return;
+
+      if (expanded || needsSettings) {
         wasExpandedRef.current = true;
+        setLayoutExpanded(true);
+        return;
+      }
+
+      const shrinking = wasExpandedRef.current;
+      wasExpandedRef.current = false;
+      if (shrinking) {
+        lastCompactHeightRef.current = Math.ceil(window.innerHeight);
+        setLayoutExpanded(false);
+        return;
+      }
+
+      setLayoutExpanded(false);
+      if (lastCompactHeightRef.current === 0) {
+        lastCompactHeightRef.current = CHAT_INITIAL_HEIGHT;
         void applyBottomAnchoredSize({
           width: CHAT_WIDTH,
-          height: CHAT_EXPANDED_HEIGHT,
+          height: CHAT_INITIAL_HEIGHT,
         });
       }
-    } else if (wasExpandedRef.current) {
-      wasExpandedRef.current = false;
-      lastCompactHeightRef.current = 0;
-      requestAnimationFrame(() => fitCompactWindow());
-    } else {
-      requestAnimationFrame(() => fitCompactWindow());
     }
+    void syncWindow();
 
     return () => {
-      document.documentElement.classList.remove("chat-expanded");
+      cancelled = true;
     };
-  }, [expanded, needsSettings, fitCompactWindow]);
+  }, [expanded, needsSettings]);
 
   const statusLabel =
     connection === "streaming"
@@ -713,6 +780,7 @@ export function useChatController() {
     rootRef,
     needsSettings,
     expanded,
+    layoutExpanded,
     error,
     agents,
     agentId,
@@ -727,6 +795,12 @@ export function useChatController() {
     queue,
     statusLabel,
     threadReady: Boolean(threadRef.current),
+    canRetryInit:
+      !needsSettings &&
+      connection === "disconnected" &&
+      Boolean(error) &&
+      !threadRef.current,
+    retryInitialize: initialize,
     openAgent,
     startNewSession,
     stopStream,

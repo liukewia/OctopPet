@@ -29,14 +29,14 @@
         "label": "chat",
         "title": "Octop Chat",
         "width": 400,
-        "height": 220,
-        "minWidth": 320,
-        "minHeight": 120,
+        "height": 400,
+        "minWidth": 280,
+        "minHeight": 200,
         "visible": false,
         "decorations": false,
         "transparent": true,
         "shadow": true,
-        "resizable": false,
+        "resizable": true,
         "backgroundColor": "#00000000"
       },
       {

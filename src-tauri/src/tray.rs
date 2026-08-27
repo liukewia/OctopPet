@@ -100,11 +100,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>, cfg: &AppConfig) -> tauri::Result<
     let separator = PredefinedMenuItem::separator(app)?;
     let settings = MenuItemBuilder::with_id(SETTINGS_ID, "设置").build(app)?;
     let version = env!("CARGO_PKG_VERSION");
-    let check_update = MenuItemBuilder::with_id(
-        CHECK_UPDATE_ID,
-        format!("检查更新                    V{version}"),
-    )
-    .build(app)?;
+    let check_update =
+        MenuItemBuilder::with_id(CHECK_UPDATE_ID, format!("检查更新  V{version}")).build(app)?;
     let quit = MenuItemBuilder::with_id(QUIT_ID, "退出").build(app)?;
     MenuBuilder::new(app)
         .items(&[

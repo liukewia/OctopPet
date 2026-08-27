@@ -1,30 +1,12 @@
-<p align="center">
-  <img src="assets/octop-app-icon.png" alt="Octop Pet" width="128" />
-</p>
+![Octop Pet](assets/octop-app-icon.png)
 
-<p align="center">
-  <strong>A desktop companion for your self-hosted Octop — floating mascot, compact chat, system tray.</strong>
-</p>
+**A desktop companion for your self-hosted Octop — floating mascot, compact chat, system tray.**
 
-<p align="center">
-  <a href="https://nodejs.org/"><img alt="Node.js LTS" src="https://img.shields.io/badge/node-LTS-green?logo=node.js&logoColor=white" /></a>
-  <a href="https://www.rust-lang.org/"><img alt="Rust stable" src="https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white" /></a>
-  <a href="https://tauri.app/"><img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-blue?logo=tauri&logoColor=white" /></a>
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-green" /></a>
-</p>
+![Node.js LTS](https://img.shields.io/badge/node-LTS-green?logo=node.js&logoColor=white)![Rust stable](https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white)![Tauri 2](https://img.shields.io/badge/Tauri-2-blue?logo=tauri&logoColor=white)![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-<p align="center">
-  <a href="#-highlights">Highlights</a> ·
-  <a href="#-overview">Overview</a> ·
-  <a href="#-quick-start">Quick Start</a> ·
-  <a href="#-usage">Usage</a> ·
-  <a href="#-development">Development</a> ·
-  <a href="#-contents">Contents</a>
-</p>
+[Highlights](#-highlights) · [Overview](#-overview) · [Quick Start](#-quick-start) · [Usage](#-usage) · [Development](#-development) · [Contents](#-contents)
 
-<p align="center">
-  <b>English</b> · <a href="README_CN.md">中文</a>
-</p>
+**English** · [中文](README_CN.md)
 
 ---
 
@@ -96,7 +78,7 @@ In a separate terminal, start your Octop server:
 octop run --host 127.0.0.1 --port 8088
 ```
 
-Open **http://127.0.0.1:8088** and create at least one agent if you have none yet.
+Open **[http://127.0.0.1:8088](http://127.0.0.1:8088)** and create at least one agent if you have none yet.
 
 ### 3. Connect Octop Pet
 
@@ -106,6 +88,8 @@ In **Settings**:
 2. Enter your Octop **username** and **password**
 3. Click **测试连接** (Test connection) to verify credentials
 4. Click **保存** (Save)
+
+Optional: in the **窗口** tab, uncheck **点击其他应用时保持窗口显示** to hide chat and settings when clicking the desktop or another app. The pet always stays visible.
 
 The service URL and username are stored in app config; passwords and access tokens use the OS keyring.
 
@@ -232,7 +216,7 @@ src-tauri/src/
 
 ## 📦 Release
 
-Push a version tag to trigger [`.github/workflows/release.yml`](.github/workflows/release.yml). Keep versions in sync:
+Push a version tag to trigger `[.github/workflows/release.yml](.github/workflows/release.yml)`. Keep versions in sync:
 
 ```sh
 make sync-version VERSION=0.2.0

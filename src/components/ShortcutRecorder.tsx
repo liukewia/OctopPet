@@ -72,7 +72,7 @@ export default function ShortcutRecorder({
       id={id}
       type="button"
       className={`shortcut-recorder${recording ? " is-recording" : ""}`}
-      aria-label={recording ? "正在录制快捷键" : "录制快捷键"}
+      aria-label={recording ? "正在录制快捷键" : undefined}
       aria-pressed={recording}
       disabled={disabled}
       onClick={startRecording}

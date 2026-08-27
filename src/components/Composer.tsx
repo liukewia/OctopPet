@@ -1,14 +1,15 @@
 import { Link2, Paperclip, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import AgentSelect from "./AgentSelect";
-import type { AgentSummary } from "../lib/types";
+import { applyPopoverPlacement, popoverPlacement } from "../lib/chatHelpers";
 import type {
   ChatAttachment,
   ConnectorOption,
   ResolvedModel,
 } from "../lib/octopTypes";
 import { modelOptionLabel, modelOptionValue } from "../lib/octopTypes";
+import type { AgentSummary } from "../lib/types";
 
 export type ComposerSendOptions = {
   attachments: ChatAttachment[];
@@ -61,9 +62,11 @@ export default function Composer({
   const [selectedConnectors, setSelectedConnectors] = useState<string[]>([]);
   const [modelOpen, setModelOpen] = useState(false);
   const [connectorOpen, setConnectorOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const composingRef = useRef(false);
   const ignoreEnterUntilRef = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const agentMenuRef = useRef<HTMLDivElement>(null);
   const modelMenuRef = useRef<HTMLDivElement>(null);
   const connectorMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -77,6 +80,9 @@ export default function Composer({
   useEffect(() => {
     function onDocClick(event: MouseEvent) {
       const target = event.target as Node;
+      if (agentMenuRef.current && !agentMenuRef.current.contains(target)) {
+        setAgentOpen(false);
+      }
       if (modelMenuRef.current && !modelMenuRef.current.contains(target)) {
         setModelOpen(false);
       }
@@ -91,6 +97,41 @@ export default function Composer({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!agentOpen && !modelOpen && !connectorOpen) return;
+    const fit = () => {
+      for (const menu of [
+        agentMenuRef.current,
+        modelMenuRef.current,
+        connectorMenuRef.current,
+      ]) {
+        const popover = menu?.querySelector<HTMLElement>(".composer-popover");
+        if (!menu || !popover) continue;
+        applyPopoverPlacement(
+          popover,
+          popoverPlacement({
+            anchor: menu.getBoundingClientRect(),
+            viewport: {
+              width: window.innerWidth,
+              height: window.innerHeight,
+            },
+            popoverWidth: popover.getBoundingClientRect().width,
+          }),
+        );
+      }
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [
+    agentOpen,
+    modelOpen,
+    connectorOpen,
+    agents.length,
+    models.length,
+    connectors.length,
+  ]);
+
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
@@ -99,7 +140,14 @@ export default function Composer({
       textarea.style.height = `${next}px`;
     }
     onLayoutChange?.();
-  }, [text, attachments.length, onLayoutChange]);
+  }, [
+    text,
+    attachments.length,
+    agentOpen,
+    modelOpen,
+    connectorOpen,
+    onLayoutChange,
+  ]);
 
   function submitDraft() {
     if (streaming) {
@@ -131,7 +179,7 @@ export default function Composer({
     (model) => modelOptionValue(model) === selectedModel,
   );
   const selectedModelLabel = selectedModelRow
-    ? modelOptionLabel(selectedModelRow)
+    ? selectedModelRow.name || selectedModelRow.model
     : "自动";
 
   const submitMode = streaming ? (hasContent ? "queue" : "stop") : "send";
@@ -239,6 +287,15 @@ export default function Composer({
             agents={agents}
             value={agentId}
             disabled={agentDisabled || streaming}
+            open={agentOpen}
+            menuRef={agentMenuRef}
+            onOpenChange={(next) => {
+              setAgentOpen(next);
+              if (next) {
+                setModelOpen(false);
+                setConnectorOpen(false);
+              }
+            }}
             onChange={onAgentChange}
           />
 
@@ -252,10 +309,11 @@ export default function Composer({
               onClick={() => {
                 setConnectorOpen((open) => !open);
                 setModelOpen(false);
+                setAgentOpen(false);
               }}
             >
               <Link2 size={14} strokeWidth={1.75} />
-              <span>
+              <span className="composer-chip-text">
                 {selectedConnectors.length
                   ? `连接器 ${selectedConnectors.length}`
                   : "连接器"}
@@ -302,6 +360,7 @@ export default function Composer({
               onClick={() => {
                 setModelOpen((open) => !open);
                 setConnectorOpen(false);
+                setAgentOpen(false);
               }}
             >
               <span className="composer-model-label">{selectedModelLabel}</span>
