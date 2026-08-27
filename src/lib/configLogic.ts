@@ -10,6 +10,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   petY: null,
   shortcutOpenPet: "CmdOrCtrl+Shift+O",
   shortcutOpenHome: "CmdOrCtrl+Shift+H",
+  keepWindowsVisible: true,
 };
 
 export const MASCOT_SRC: Record<MascotId, string> = {

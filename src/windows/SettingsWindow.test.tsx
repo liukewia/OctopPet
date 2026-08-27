@@ -25,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   emitMascotChanged: vi.fn(),
   listenMascotChanged: vi.fn(),
   listenWindowShown: vi.fn(),
+  hideCurrentWindow: vi.fn(),
+  applyWindowDeactivatePolicy: vi.fn(),
 }));
 
 vi.mock("../lib/tauriApi", () => ({
@@ -40,11 +42,12 @@ vi.mock("../lib/tauriApi", () => ({
     emitMascotChanged: mocks.emitMascotChanged,
     listenMascotChanged: mocks.listenMascotChanged,
     listenWindowShown: mocks.listenWindowShown,
+    applyWindowDeactivatePolicy: mocks.applyWindowDeactivatePolicy,
   },
 }));
 
 vi.mock("../lib/tauriWindowApi", () => ({
-  hideCurrentWindow: vi.fn().mockResolvedValue(undefined),
+  hideCurrentWindow: mocks.hideCurrentWindow.mockResolvedValue(undefined),
   setCurrentWindowSize: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -52,8 +55,16 @@ vi.mock("../lib/octopHttp", () => ({
   login: mocks.login,
 }));
 
+const originalPlatform = navigator.platform;
+
 describe("SettingsWindow", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: originalPlatform,
+    });
+    cleanup();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -75,10 +86,37 @@ describe("SettingsWindow", () => {
     mocks.emitMascotChanged.mockResolvedValue(undefined);
     mocks.listenMascotChanged.mockResolvedValue(vi.fn());
     mocks.listenWindowShown.mockResolvedValue(vi.fn());
+    mocks.applyWindowDeactivatePolicy.mockResolvedValue(undefined);
     mocks.login.mockResolvedValue({
       access_token: "hidden-access-token",
       expires_in: 3600,
     });
+  });
+
+  it("places the close control on the left on macOS", async () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "MacIntel",
+    });
+    render(<SettingsWindow />);
+
+    expect(await screen.findByRole("button", { name: "关闭" })).toHaveAttribute(
+      "data-close-side",
+      "start",
+    );
+  });
+
+  it("places the close control on the right on Windows", async () => {
+    Object.defineProperty(navigator, "platform", {
+      configurable: true,
+      value: "Win32",
+    });
+    render(<SettingsWindow />);
+
+    expect(await screen.findByRole("button", { name: "关闭" })).toHaveAttribute(
+      "data-close-side",
+      "end",
+    );
   });
 
   it("loads config and password without rendering an access token", async () => {
@@ -89,10 +127,15 @@ describe("SettingsWindow", () => {
     );
     expect(screen.getByLabelText("用户")).toHaveValue("octopus");
     expect(screen.getByLabelText("密码")).toHaveValue("secret-password");
+    expect(screen.getByText("连接")).toBeInTheDocument();
+    expect(screen.getByText("桌宠形象")).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Type" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
+    expect(
+      screen.queryByLabelText("点击其他应用时保持窗口显示"),
+    ).not.toBeInTheDocument();
     expect(mocks.getSecret).toHaveBeenCalledWith("password");
     expect(screen.queryByText("hidden-access-token")).not.toBeInTheDocument();
   });
@@ -144,6 +187,7 @@ describe("SettingsWindow", () => {
         mascotId: "type",
         shortcutOpenPet: "CmdOrCtrl+Shift+O",
         shortcutOpenHome: "CmdOrCtrl+Shift+H",
+        keepWindowsVisible: true,
       }),
     );
     expect(mocks.setSecret).toHaveBeenCalledWith("password", "new-password");
@@ -157,8 +201,9 @@ describe("SettingsWindow", () => {
       "hidden-access-token",
     );
     expect(mocks.reloadHotkeys).toHaveBeenCalledOnce();
+    expect(mocks.applyWindowDeactivatePolicy).toHaveBeenCalledOnce();
     expect(mocks.emitAuthUpdated).toHaveBeenCalledOnce();
-    expect(await screen.findByText("设置已保存")).toBeInTheDocument();
+    await waitFor(() => expect(mocks.hideCurrentWindow).toHaveBeenCalledOnce());
   });
 
   it("records a shortcut after clicking the hotkey field", async () => {
@@ -216,5 +261,23 @@ describe("SettingsWindow", () => {
     expect(
       await screen.findByText("连接失败：用户名或密码错误"),
     ).toBeInTheDocument();
+  });
+
+  it("toggles click-away visibility immediately", async () => {
+    render(<SettingsWindow />);
+    await screen.findByLabelText("服务地址");
+    fireEvent.click(screen.getByRole("tab", { name: "窗口" }));
+    const checkbox = await screen.findByLabelText("点击其他应用时保持窗口显示");
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(checkbox);
+
+    await waitFor(() =>
+      expect(mocks.patchConfig).toHaveBeenCalledWith({
+        keepWindowsVisible: false,
+      }),
+    );
+    expect(mocks.applyWindowDeactivatePolicy).toHaveBeenCalledOnce();
+    expect(checkbox).not.toBeChecked();
   });
 });

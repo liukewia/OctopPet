@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import ShortcutRecorder from "../components/ShortcutRecorder";
+import WindowCloseButton from "../components/WindowCloseButton";
 import {
   useAutoFitWindow,
   useEscapeHidesWindow,
@@ -17,7 +18,7 @@ import { hideCurrentWindow } from "../lib/tauriWindowApi";
 import type { AppConfig, MascotId } from "../lib/types";
 
 type Notice = { kind: "success" | "error"; text: string } | null;
-type SettingsTab = "general" | "hotkeys" | "about";
+type SettingsTab = "general" | "window" | "hotkeys" | "about";
 
 const SETTINGS_WIDTH = 480;
 
@@ -28,6 +29,7 @@ const MASCOT_OPTIONS: Array<{ id: MascotId; label: string }> = [
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: "general", label: "常规" },
+  { id: "window", label: "窗口" },
   { id: "hotkeys", label: "快捷键" },
   { id: "about", label: "关于" },
 ];
@@ -48,6 +50,9 @@ export default function SettingsWindow() {
   );
   const [shortcutOpenHome, setShortcutOpenHome] = useState(
     DEFAULT_APP_CONFIG.shortcutOpenHome,
+  );
+  const [keepWindowsVisible, setKeepWindowsVisible] = useState(
+    DEFAULT_APP_CONFIG.keepWindowsVisible,
   );
   const [notice, setNotice] = useState<Notice>(null);
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
@@ -73,6 +78,7 @@ export default function SettingsWindow() {
         setShortcutOpenHome(
           loadedConfig.shortcutOpenHome || DEFAULT_APP_CONFIG.shortcutOpenHome,
         );
+        setKeepWindowsVisible(loadedConfig.keepWindowsVisible);
         if (!loadedConfig.username.trim()) return;
 
         const savedPassword = await tauriApi
@@ -132,11 +138,30 @@ export default function SettingsWindow() {
     }
   }
 
+  async function toggleKeepWindowsVisible(next: boolean) {
+    const previous = keepWindowsVisible;
+    setKeepWindowsVisible(next);
+    try {
+      await tauriApi.patchConfig({ keepWindowsVisible: next });
+      await tauriApi.applyWindowDeactivatePolicy();
+      setConfig((current) =>
+        current ? { ...current, keepWindowsVisible: next } : current,
+      );
+    } catch (error) {
+      setKeepWindowsVisible(previous);
+      setNotice({
+        kind: "error",
+        text: `更新窗口设置失败：${errorMessage(error)}`,
+      });
+    }
+  }
+
   async function persistCredentials(
     normalizedBaseUrl: string,
     extra: Partial<{
       shortcutOpenPet: string;
       shortcutOpenHome: string;
+      keepWindowsVisible: boolean;
     }> = {},
   ) {
     const patch = {
@@ -164,8 +189,10 @@ export default function SettingsWindow() {
           shortcutOpenPet.trim() || DEFAULT_APP_CONFIG.shortcutOpenPet,
         shortcutOpenHome:
           shortcutOpenHome.trim() || DEFAULT_APP_CONFIG.shortcutOpenHome,
+        keepWindowsVisible,
       });
       await tauriApi.reloadHotkeys();
+      await tauriApi.applyWindowDeactivatePolicy();
       const nextConfig = { ...config, ...patch };
       setConfig(nextConfig);
       setBaseUrl(normalizedBaseUrl);
@@ -175,6 +202,9 @@ export default function SettingsWindow() {
       setShortcutOpenHome(
         patch.shortcutOpenHome || DEFAULT_APP_CONFIG.shortcutOpenHome,
       );
+      setKeepWindowsVisible(
+        patch.keepWindowsVisible ?? DEFAULT_APP_CONFIG.keepWindowsVisible,
+      );
       try {
         const { access_token } = await login(
           normalizedBaseUrl,
@@ -183,7 +213,7 @@ export default function SettingsWindow() {
         );
         await tauriApi.setSecret("access_token", access_token);
         await tauriApi.emitAuthUpdated();
-        setNotice({ kind: "success", text: "设置已保存" });
+        await hideCurrentWindow();
       } catch (loginError) {
         await tauriApi.emitAuthUpdated();
         setNotice({
@@ -247,14 +277,7 @@ export default function SettingsWindow() {
             </button>
           ))}
         </div>
-        <button
-          type="button"
-          className="settings-close"
-          aria-label="关闭"
-          onClick={() => void hideCurrentWindow()}
-        >
-          ×
-        </button>
+        <WindowCloseButton />
       </nav>
 
       <div className="settings-frame">
@@ -266,37 +289,40 @@ export default function SettingsWindow() {
               void saveSettings();
             }}
           >
-            <div className="settings-rows">
-              <div className="settings-row">
-                <label htmlFor="base-url">服务地址</label>
-                <input
-                  id="base-url"
-                  type="text"
-                  inputMode="url"
-                  value={baseUrl}
-                  onChange={(event) => setBaseUrl(event.currentTarget.value)}
-                  placeholder="http://localhost:8088"
-                  autoComplete="url"
-                />
-              </div>
-              <div className="settings-row">
-                <label htmlFor="username">用户</label>
-                <input
-                  id="username"
-                  value={username}
-                  onChange={(event) => setUsername(event.currentTarget.value)}
-                  autoComplete="username"
-                />
-              </div>
-              <div className="settings-row">
-                <label htmlFor="password">密码</label>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.currentTarget.value)}
-                  autoComplete="current-password"
-                />
+            <div className="settings-subgroup">
+              <div className="settings-subgroup-title">连接</div>
+              <div className="settings-rows">
+                <div className="settings-row">
+                  <label htmlFor="base-url">服务地址</label>
+                  <input
+                    id="base-url"
+                    type="text"
+                    inputMode="url"
+                    value={baseUrl}
+                    onChange={(event) => setBaseUrl(event.currentTarget.value)}
+                    placeholder="http://localhost:8088"
+                    autoComplete="url"
+                  />
+                </div>
+                <div className="settings-row">
+                  <label htmlFor="username">用户</label>
+                  <input
+                    id="username"
+                    value={username}
+                    onChange={(event) => setUsername(event.currentTarget.value)}
+                    autoComplete="username"
+                  />
+                </div>
+                <div className="settings-row">
+                  <label htmlFor="password">密码</label>
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.currentTarget.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
               </div>
             </div>
 
@@ -362,6 +388,35 @@ export default function SettingsWindow() {
               </div>
             </div>
           </form>
+        ) : null}
+
+        {tab === "window" ? (
+          <div className="settings-panel">
+            <label className="settings-check" htmlFor="keep-windows-visible">
+              <input
+                id="keep-windows-visible"
+                type="checkbox"
+                checked={keepWindowsVisible}
+                disabled={!config || busy !== null}
+                onChange={(event) =>
+                  void toggleKeepWindowsVisible(event.currentTarget.checked)
+                }
+              />
+              <span>点击其他应用时保持窗口显示</span>
+            </label>
+            <p className="settings-hint">
+              关闭后，点到桌面或其他应用会隐藏聊天和设置。桌宠始终显示。
+            </p>
+            {notice ? (
+              <p
+                className={`settings-notice settings-notice--${notice.kind}`}
+                role={notice.kind === "error" ? "alert" : "status"}
+                aria-live="polite"
+              >
+                {notice.text}
+              </p>
+            ) : null}
+          </div>
         ) : null}
 
         {tab === "hotkeys" ? (

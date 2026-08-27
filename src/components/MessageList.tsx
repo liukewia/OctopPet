@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import logoUrl from "../assets/logo.svg";
 import type { ChatMessage } from "../lib/types";
 import AssistantMarkdown from "./AssistantMarkdown";
 import GeneratingIndicator from "./GeneratingIndicator";
@@ -181,8 +182,15 @@ export default function MessageList({
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [messages, statusLabel]);
 
-  if (!loading && messages.length === 0 && !statusLabel) {
-    return null;
+  if (messages.length === 0 && !statusLabel) {
+    return (
+      <section
+        className="message-list message-list-empty"
+        aria-label="暂无消息"
+      >
+        <img src={logoUrl} alt="" className="chat-empty-logo" />
+      </section>
+    );
   }
 
   return (

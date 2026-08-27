@@ -37,3 +37,9 @@ describe("withMascot", () => {
     expect(withMascot(DEFAULT_APP_CONFIG, "type").mascotId).toBe("type");
   });
 });
+
+describe("defaults", () => {
+  it("keeps windows visible after clicking another app", () => {
+    expect(DEFAULT_APP_CONFIG.keepWindowsVisible).toBe(true);
+  });
+});

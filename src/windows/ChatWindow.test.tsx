@@ -10,6 +10,12 @@ import {
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  CHAT_INITIAL_HEIGHT,
+  CHAT_MIN_HEIGHT,
+  CHAT_MIN_WIDTH,
+  CHAT_WIDTH,
+} from "../lib/chatHelpers";
 import { DEFAULT_APP_CONFIG } from "../lib/configLogic";
 import { OctopHttpError } from "../lib/octopHttp";
 import ChatWindow from "./ChatWindow";
@@ -32,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   listConnectors: vi.fn(),
   uploadAttachment: vi.fn(),
   setMinSize: vi.fn(),
+  setResizable: vi.fn(),
   applyBottomAnchoredSize: vi.fn(),
   hideCurrentWindow: vi.fn(),
 }));
@@ -40,7 +47,7 @@ vi.mock("../lib/tauriWindowApi", () => ({
   hideCurrentWindow: mocks.hideCurrentWindow.mockResolvedValue(undefined),
   applyBottomAnchoredSize:
     mocks.applyBottomAnchoredSize.mockResolvedValue(undefined),
-  setCurrentWindowResizable: vi.fn().mockResolvedValue(undefined),
+  setCurrentWindowResizable: mocks.setResizable.mockResolvedValue(undefined),
   clearCurrentWindowMaxSize: vi.fn().mockResolvedValue(undefined),
   setCurrentWindowMinSize: mocks.setMinSize.mockResolvedValue(undefined),
   startCurrentWindowResize: vi.fn().mockResolvedValue(undefined),
@@ -161,36 +168,27 @@ describe("ChatWindow", () => {
     });
   });
 
-  it("紧凑窗口贴合内容高度，不留出画阴影的空白", async () => {
-    const contentHeight = 155;
-    const rect = vi
-      .spyOn(Element.prototype, "getBoundingClientRect")
-      .mockReturnValue({
-        width: 400,
-        height: contentHeight,
-        top: 0,
-        left: 0,
-        right: 400,
-        bottom: contentHeight,
-        x: 0,
-        y: 0,
-        toJSON: () => ({}),
-      } as DOMRect);
-
+  it("紧凑窗口使用更高的初始高度，并允许缩放", async () => {
     render(<ChatWindow />);
 
     await waitFor(() =>
-      expect(mocks.applyBottomAnchoredSize).toHaveBeenCalled(),
+      expect(mocks.applyBottomAnchoredSize).toHaveBeenCalledWith({
+        width: CHAT_WIDTH,
+        height: CHAT_INITIAL_HEIGHT,
+      }),
     );
-    expect(mocks.applyBottomAnchoredSize).toHaveBeenCalledWith({
-      width: 400,
-      height: contentHeight,
-    });
-
-    const minHeight = mocks.setMinSize.mock.calls.at(-1)?.[1] as number;
-    expect(minHeight).toBeLessThanOrEqual(contentHeight);
-
-    rect.mockRestore();
+    expect(mocks.setResizable).toHaveBeenCalledWith(true);
+    expect(mocks.setMinSize).toHaveBeenCalledWith(
+      CHAT_MIN_WIDTH,
+      CHAT_MIN_HEIGHT,
+    );
+    expect(screen.getByLabelText("调整窗口大小")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("region", { name: "暂无消息" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("region", { name: "暂无消息" }).querySelector("img"),
+    ).toHaveClass("chat-empty-logo");
   });
 
   it("没有令牌但有密码时会静默登录后继续初始化", async () => {
@@ -205,7 +203,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.login).toHaveBeenCalledWith(
       "https://octop.example",
@@ -252,7 +250,7 @@ describe("ChatWindow", () => {
     authUpdated?.();
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.listAgents).toHaveBeenCalledWith(
       "https://octop.example",
@@ -283,7 +281,7 @@ describe("ChatWindow", () => {
     chatShown?.();
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.listAgents).toHaveBeenCalledTimes(2);
   });
@@ -355,8 +353,9 @@ describe("ChatWindow", () => {
     });
 
     render(<ChatWindow />);
-    const select = await screen.findByRole("combobox", { name: "选择代理" });
-    fireEvent.change(select, { target: { value: "a2" } });
+    const trigger = await screen.findByRole("button", { name: "选择代理" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "助手二" }));
 
     await waitFor(() =>
       expect(mocks.createThread).toHaveBeenCalledWith(
@@ -383,7 +382,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.login).toHaveBeenCalledWith(
       "https://octop.example",
@@ -423,7 +422,7 @@ describe("ChatWindow", () => {
     );
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.listAgents).toHaveBeenCalledOnce();
   });
@@ -445,12 +444,12 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("开始和代理聊聊吧")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("region", { name: "聊天消息" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("region", { name: "暂无消息" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "新建会话" }));
@@ -500,8 +499,8 @@ describe("ChatWindow", () => {
     expect(screen.queryByText("旧问题")).not.toBeInTheDocument();
     expect(screen.queryByText("正在加载对话…")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("region", { name: "聊天消息" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("region", { name: "暂无消息" }),
+    ).toBeInTheDocument();
 
     finishCreate({ thread_id: "thread-fresh", session_key: "session-fresh" });
     await waitFor(() =>
@@ -605,13 +604,12 @@ describe("ChatWindow", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
-    await waitFor(() =>
-      expect(mocks.applyBottomAnchoredSize).toHaveBeenCalledWith({
-        width: 400,
-        height: 560,
-        animate: true,
-      }),
-    );
+    await waitFor(() => expect(FakeWebSocket.instances.length).toBe(1));
+    expect(
+      mocks.applyBottomAnchoredSize.mock.calls.some(
+        ([size]) => size?.height === 560,
+      ),
+    ).toBe(false);
 
     const socket = FakeWebSocket.instances[0];
     socket.open();
@@ -661,7 +659,7 @@ describe("ChatWindow", () => {
 
     render(<ChatWindow />);
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("消息"), {
@@ -709,7 +707,7 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
 
     expect(
-      await screen.findByRole("combobox", { name: "选择代理" }),
+      await screen.findByRole("button", { name: "选择代理" }),
     ).toBeInTheDocument();
     expect(mocks.listAgents).toHaveBeenCalledTimes(2);
   });

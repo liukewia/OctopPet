@@ -32,7 +32,7 @@ export default function ChatWindow() {
 
   return (
     <main
-      className={`chat-window${chat.expanded ? " is-expanded" : " is-compact"}`}
+      className={`chat-window${chat.layoutExpanded ? " is-expanded" : " is-compact"}`}
       ref={chat.rootRef}
     >
       <ChatChrome
@@ -41,33 +41,31 @@ export default function ChatWindow() {
           chat.loadingHistory || chat.connection === "streaming"
         }
       />
-      {chat.expanded || chat.error ? (
-        <div className="chat-body">
-          {chat.error ? (
-            <div className="chat-error" role="alert">
-              <p>{chat.error}</p>
-              {chat.canRetryInit ? (
-                <button
-                  type="button"
-                  className="chat-error-retry"
-                  onClick={() => void chat.retryInitialize()}
-                >
-                  重试
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          <MessageList
-            messages={chat.messages}
-            loading={chat.loadingHistory}
-            actionsDisabled={chat.connection === "streaming"}
-            speakingId={chat.speakingId}
-            statusLabel={chat.statusLabel}
-            onRetry={chat.retryAssistant}
-            onSpeak={chat.speakMessage}
-          />
-        </div>
-      ) : null}
+      <div className="chat-body">
+        {chat.error ? (
+          <div className="chat-error" role="alert">
+            <p>{chat.error}</p>
+            {chat.canRetryInit ? (
+              <button
+                type="button"
+                className="chat-error-retry"
+                onClick={() => void chat.retryInitialize()}
+              >
+                重试
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <MessageList
+          messages={chat.messages}
+          loading={chat.loadingHistory}
+          actionsDisabled={chat.connection === "streaming"}
+          speakingId={chat.speakingId}
+          statusLabel={chat.statusLabel}
+          onRetry={chat.retryAssistant}
+          onSpeak={chat.speakMessage}
+        />
+      </div>
       <QueuedMessages
         items={chat.queue}
         onRemove={(id) =>
@@ -95,7 +93,7 @@ export default function ChatWindow() {
         }
       />
       <p className="chat-footnote">内容由 AI 生成，仅供参考</p>
-      {chat.expanded ? <ChatResizeChrome /> : null}
+      <ChatResizeChrome />
     </main>
   );
 }

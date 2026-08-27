@@ -14,12 +14,12 @@ import {
   buildUserTurnPayload,
 } from "../lib/chatStream";
 import {
-  CHAT_COMPACT_ANIMATE_DELTA,
   CHAT_COMPACT_MIN_HEIGHT,
-  CHAT_EXPANDED_HEIGHT,
+  CHAT_INITIAL_HEIGHT,
   CHAT_MIN_HEIGHT,
   CHAT_MIN_WIDTH,
   CHAT_WIDTH,
+  chatWindowWidth,
   chatErrorText,
   compactWindowHeight,
   historyMessages,
@@ -80,6 +80,8 @@ export function useChatController() {
   const rootRef = useRef<HTMLElement | null>(null);
   const wasExpandedRef = useRef(false);
   const lastCompactHeightRef = useRef(0);
+  const [layoutExpanded, setLayoutExpanded] = useState(false);
+  const layoutExpandedRef = useRef(false);
 
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [models, setModels] = useState<ResolvedModel[]>([]);
@@ -119,6 +121,10 @@ export function useChatController() {
   messagesRef.current = messages;
 
   const expanded = messages.length > 0 || queue.length > 0;
+  layoutExpandedRef.current = layoutExpanded;
+  if (expanded && !layoutExpanded) {
+    setLayoutExpanded(true);
+  }
 
   const requireSettings = useCallback(async () => {
     tokenRef.current = "";
@@ -706,62 +712,64 @@ export function useChatController() {
   const fitCompactWindow = useCallback(
     (animate = false) => {
       const root = rootRef.current;
-      if (!root || expanded || needsSettings) return;
-      const height = compactWindowHeight(root, CHAT_COMPACT_MIN_HEIGHT);
-      if (height === lastCompactHeightRef.current) return;
-      const shouldAnimate =
-        animate ||
-        (lastCompactHeightRef.current > 0 &&
-          Math.abs(height - lastCompactHeightRef.current) >=
-            CHAT_COMPACT_ANIMATE_DELTA);
-      lastCompactHeightRef.current = height;
+      if (!root || expanded || layoutExpandedRef.current || needsSettings)
+        return;
+      const needed = compactWindowHeight(root, CHAT_COMPACT_MIN_HEIGHT);
+      const current = Math.ceil(window.innerHeight);
+      if (needed <= current) return;
+      lastCompactHeightRef.current = needed;
       void applyBottomAnchoredSize({
-        width: CHAT_WIDTH,
-        height,
-        ...(shouldAnimate ? { animate: true } : {}),
+        width: chatWindowWidth(),
+        height: needed,
+        ...(animate ? { animate: true } : {}),
       });
     },
     [expanded, needsSettings],
   );
 
   useLayoutEffect(() => {
-    document.documentElement.classList.toggle("chat-expanded", expanded);
-    void setCurrentWindowResizable(expanded);
+    document.documentElement.classList.toggle("chat-expanded", layoutExpanded);
+    return () => document.documentElement.classList.remove("chat-expanded");
+  }, [layoutExpanded]);
+
+  useLayoutEffect(() => {
+    void setCurrentWindowResizable(true);
     void clearCurrentWindowMaxSize();
 
     let cancelled = false;
     async function syncWindow() {
+      await setCurrentWindowMinSize(CHAT_MIN_WIDTH, CHAT_MIN_HEIGHT);
+      if (cancelled) return;
+
       if (expanded || needsSettings) {
-        const grew = !wasExpandedRef.current;
         wasExpandedRef.current = true;
-        if (grew) {
-          await applyBottomAnchoredSize({
-            width: CHAT_WIDTH,
-            height: CHAT_EXPANDED_HEIGHT,
-            animate: true,
-          });
-        }
-        if (cancelled) return;
-        await setCurrentWindowMinSize(CHAT_MIN_WIDTH, CHAT_MIN_HEIGHT);
+        setLayoutExpanded(true);
         return;
       }
 
-      await setCurrentWindowMinSize(CHAT_MIN_WIDTH, CHAT_COMPACT_MIN_HEIGHT);
-      if (cancelled) return;
       const shrinking = wasExpandedRef.current;
       wasExpandedRef.current = false;
-      if (shrinking) lastCompactHeightRef.current = 0;
-      requestAnimationFrame(() => {
-        if (!cancelled) fitCompactWindow(shrinking);
-      });
+      if (shrinking) {
+        lastCompactHeightRef.current = Math.ceil(window.innerHeight);
+        setLayoutExpanded(false);
+        return;
+      }
+
+      setLayoutExpanded(false);
+      if (lastCompactHeightRef.current === 0) {
+        lastCompactHeightRef.current = CHAT_INITIAL_HEIGHT;
+        void applyBottomAnchoredSize({
+          width: CHAT_WIDTH,
+          height: CHAT_INITIAL_HEIGHT,
+        });
+      }
     }
     void syncWindow();
 
     return () => {
       cancelled = true;
-      document.documentElement.classList.remove("chat-expanded");
     };
-  }, [expanded, needsSettings, fitCompactWindow]);
+  }, [expanded, needsSettings]);
 
   const statusLabel =
     connection === "streaming"
@@ -772,6 +780,7 @@ export function useChatController() {
     rootRef,
     needsSettings,
     expanded,
+    layoutExpanded,
     error,
     agents,
     agentId,

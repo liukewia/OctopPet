@@ -20,6 +20,7 @@ pub struct AppConfig {
     pub pet_y: Option<f64>,
     pub shortcut_open_pet: String,
     pub shortcut_open_home: String,
+    pub keep_windows_visible: bool,
 }
 
 impl Default for AppConfig {
@@ -34,6 +35,7 @@ impl Default for AppConfig {
             pet_y: None,
             shortcut_open_pet: "CmdOrCtrl+Shift+O".into(),
             shortcut_open_home: "CmdOrCtrl+Shift+H".into(),
+            keep_windows_visible: true,
         }
     }
 }
@@ -97,6 +99,7 @@ fn merge_patch(cfg: &mut AppConfig, patch: Value) -> Result<(), String> {
             "petY" => cfg.pet_y = patch_field(key, value.clone())?,
             "shortcutOpenPet" => cfg.shortcut_open_pet = patch_field(key, value.clone())?,
             "shortcutOpenHome" => cfg.shortcut_open_home = patch_field(key, value.clone())?,
+            "keepWindowsVisible" => cfg.keep_windows_visible = patch_field(key, value.clone())?,
             _ => return Err(format!("unsupported config field: {key}")),
         }
     }

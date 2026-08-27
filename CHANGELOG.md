@@ -9,8 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Chat window height no longer snaps when starting a new conversation or sending the first message; resize stays bottom-anchored
-- Model and connector menus are no longer clipped or covered by the chat card
+- macOS close traffic light shows × on hover and a pressed state
+- Clicking the pet again reopens chat beside the icon instead of restoring the last screen position
+- Chat window height no longer snaps when starting a new conversation or sending the first message; resize stays bottom-anchored and eases over 360ms
+- Model and connector menus stay inside the chat window and scroll instead of growing the OS window
 - Queued follow-up turns no longer mark the finished reply as “连接意外断开”
 - Saving settings now logs in and stores the token; testing connection also stores the password
 - Chat can silently log in with the saved password when the access token is missing
@@ -22,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Model and agent popovers grow with the chat window so a tall window can show the full list
+- Empty chat shows a gray logo in the message area
+- Agent picker uses the same popover as the model list
+- Setting to keep chat and settings visible when clicking another app (on by default)
+- Settings tabs: 常规 (connection + mascot), 窗口, 快捷键, 关于
 - `hooks/useChatController.ts`, `hooks/useWindowChrome.ts` — chat/settings window logic extracted from UI
 - `lib/octopTypes.ts`, `lib/tauriWindowApi.ts`, `lib/chatHelpers.ts` — clearer module boundaries
 - `components/ChatChrome.tsx`, `components/ChatResizeChrome.tsx`
@@ -33,6 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Chat window starts at 400px and stays resizable; empty compact state fills the window instead of shrink-wrapping
+- Sending a message no longer changes chat window height
+- Narrow chat windows (~300px) keep the send button on-screen; toolbar chips shrink and wrap
+- Debug builds store credentials in a local app-data file so macOS Keychain does not prompt on every rebuild
+- Chat and settings close buttons follow the OS: traffic-light dot on the left on macOS, × on the right on Windows and Linux
+- Settings window hides after a successful save
 - `ChatWindow.tsx` slimmed to layout shell (~90 lines); logic in `useChatController`
 - `SettingsWindow` uses shared auto-fit + Escape hooks; events via `tauriApi`
 - Removed unused Tauri scaffold `App.tsx`; `index.html` title/icon → OctopPet

@@ -11,11 +11,97 @@ pub const CHAT_BOTTOM_GAP_LOGICAL: f64 = 96.0;
 /// Back-compat alias used by older call sites / docs.
 pub const BOTTOM_GAP_LOGICAL: f64 = CHAT_BOTTOM_GAP_LOGICAL;
 
-static CHAT_HAS_BEEN_SHOWN: AtomicBool = AtomicBool::new(false);
 static SETTINGS_HAS_BEEN_SHOWN: AtomicBool = AtomicBool::new(false);
+static KEEP_WINDOWS_VISIBLE: AtomicBool = AtomicBool::new(true);
 
 pub fn should_hide_on_close(label: &str) -> bool {
     matches!(label, "chat" | "settings")
+}
+
+/// Chat and settings hide on click-away only when the setting is off.
+/// The pet never hides this way.
+pub fn should_hide_on_unfocus(label: &str, keep_windows_visible: bool) -> bool {
+    !keep_windows_visible && matches!(label, "chat" | "settings")
+}
+
+fn keep_windows_visible() -> bool {
+    KEEP_WINDOWS_VISIBLE.load(Ordering::SeqCst)
+}
+
+/// Apply macOS hide-on-deactivate / Transient vs Stationary.
+fn apply_macos_deactivate_behavior(window: &WebviewWindow, keep_visible: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = window.with_webview(move |webview| {
+            use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+            unsafe {
+                let ns_window: &NSWindow = &*webview.ns_window().cast();
+                ns_window.setHidesOnDeactivate(!keep_visible);
+                let mut behavior = ns_window.collectionBehavior();
+                if keep_visible {
+                    behavior.remove(NSWindowCollectionBehavior::Transient);
+                    behavior.insert(NSWindowCollectionBehavior::Stationary);
+                } else {
+                    behavior.remove(NSWindowCollectionBehavior::Stationary);
+                    behavior.insert(NSWindowCollectionBehavior::Transient);
+                }
+                ns_window.setCollectionBehavior(behavior);
+            }
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        let _ = keep_visible;
+    }
+}
+
+/// Keep a window on screen after the user clicks another app.
+pub fn keep_visible_on_app_deactivate(window: &WebviewWindow) {
+    apply_macos_deactivate_behavior(window, true);
+}
+
+/// Load the setting and apply it to chat/settings. Pet always stays visible.
+#[tauri::command]
+pub fn apply_window_deactivate_policy(app: AppHandle) -> Result<(), String> {
+    let keep = crate::config_cmd::load_config(app.clone())
+        .map(|cfg| cfg.keep_windows_visible)
+        .unwrap_or(true);
+    KEEP_WINDOWS_VISIBLE.store(keep, Ordering::SeqCst);
+
+    if let Some(pet) = app.get_webview_window("pet") {
+        keep_visible_on_app_deactivate(&pet);
+    }
+    if let Some(chat) = app.get_webview_window("chat") {
+        let _ = chat.set_always_on_top(keep);
+        apply_macos_deactivate_behavior(&chat, keep);
+    }
+    if let Some(settings) = app.get_webview_window("settings") {
+        apply_macos_deactivate_behavior(&settings, keep);
+    }
+    Ok(())
+}
+
+pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
+    let label = window.label();
+    if label == "pet" {
+        ensure_pet_transparent(window.app_handle());
+        return;
+    }
+
+    if keep_windows_visible() {
+        if let Some(win) = window.app_handle().get_webview_window(label) {
+            apply_macos_deactivate_behavior(&win, true);
+            if label == "chat" {
+                let _ = win.set_always_on_top(true);
+            }
+        }
+        return;
+    }
+
+    if !focused && should_hide_on_unfocus(label, false) {
+        let _ = window.hide();
+    }
 }
 
 /// macOS often paints an opaque gray canvas / OS shadow on the pet window
@@ -48,6 +134,7 @@ pub fn ensure_pet_transparent(app: &AppHandle) {
             }
         });
     }
+    keep_visible_on_app_deactivate(&pet);
 
     // Force the page canvas clear in case CSS left a gray layer.
     let _ = pet.eval(
@@ -105,6 +192,10 @@ pub fn home_url(base_url: &str) -> Result<String, String> {
     }
     Ok(format!("{base_url}/"))
 }
+
+/// macOS window resize animation. AppKit's default `setFrame:animate:` is ~0.2s
+/// and reads as a snap for compact ↔ expanded chat.
+pub const RESIZE_ANIMATION_DURATION: f64 = 0.36;
 
 /// Keep the top-left origin's x, and shift y so the bottom edge stays put.
 pub fn bottom_anchored_position(
@@ -168,14 +259,26 @@ fn apply_bottom_anchored_size_macos(
     let frame_h = height + extra_h;
     window
         .with_webview(move |webview| {
-            use objc2_app_kit::NSWindow;
+            use objc2_app_kit::{NSAnimatablePropertyContainer, NSAnimationContext, NSWindow};
+            use objc2_quartz_core::{kCAMediaTimingFunctionEaseInEaseOut, CAMediaTimingFunction};
             unsafe {
                 let ns_window: &NSWindow = &*webview.ns_window().cast();
                 let mut frame = ns_window.frame();
                 // AppKit origin is bottom-left, so keeping origin.y pins the bottom edge.
                 frame.size.width = frame_w;
                 frame.size.height = frame_h;
-                ns_window.setFrame_display_animate(frame, true, animate);
+                if !animate {
+                    ns_window.setFrame_display(frame, true);
+                    return;
+                }
+                NSAnimationContext::beginGrouping();
+                let ctx = NSAnimationContext::currentContext();
+                ctx.setDuration(RESIZE_ANIMATION_DURATION);
+                ctx.setTimingFunction(Some(&CAMediaTimingFunction::functionWithName(
+                    kCAMediaTimingFunctionEaseInEaseOut,
+                )));
+                ns_window.animator().setFrame_display(frame, true);
+                NSAnimationContext::endGrouping();
             }
         })
         .map_err(|error| format!("failed to resize window: {error}"))
@@ -230,6 +333,69 @@ pub fn bottom_centered_position(
         desired_x.clamp(work_left, max_x) as i32,
         desired_y.clamp(work_top, max_y) as i32,
     )
+}
+
+/// Place the chat window beside the pet: prefer the pet's right side, else left.
+/// Clamp into the monitor work area so the chat stays on-screen.
+pub fn chat_position(
+    pet_position: (i32, i32),
+    pet_size: (u32, u32),
+    chat_size: (u32, u32),
+    work_position: (i32, i32),
+    work_size: (u32, u32),
+) -> (i32, i32) {
+    let pet_width = pet_size.0 as i64;
+    let chat_width = chat_size.0 as i64;
+    let chat_height = chat_size.1 as i64;
+    let work_left = work_position.0 as i64;
+    let work_top = work_position.1 as i64;
+    let work_right = work_left + work_size.0 as i64;
+    let work_bottom = work_top + work_size.1 as i64;
+    let pet_x = pet_position.0 as i64;
+    let pet_y = pet_position.1 as i64;
+
+    let right_x = pet_x + pet_width;
+    let desired_x = if right_x + chat_width <= work_right {
+        right_x
+    } else {
+        pet_x - chat_width
+    };
+    let max_x = (work_right - chat_width).max(work_left);
+    let max_y = (work_bottom - chat_height).max(work_top);
+
+    (
+        desired_x.clamp(work_left, max_x) as i32,
+        pet_y.clamp(work_top, max_y) as i32,
+    )
+}
+
+fn place_chat_near_pet(app: &AppHandle, chat: &WebviewWindow) -> Result<(), String> {
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "pet window not found".to_string())?;
+    let pet_position = pet
+        .outer_position()
+        .map_err(|error| format!("failed to read pet position: {error}"))?;
+    let pet_size = pet
+        .outer_size()
+        .map_err(|error| format!("failed to read pet size: {error}"))?;
+    let chat_size = chat
+        .outer_size()
+        .map_err(|error| format!("failed to read chat size: {error}"))?;
+    let monitor = pet
+        .current_monitor()
+        .map_err(|error| format!("failed to find pet monitor: {error}"))?
+        .ok_or_else(|| "pet window is not on an available monitor".to_string())?;
+    let work_area = monitor.work_area();
+    let (x, y) = chat_position(
+        (pet_position.x, pet_position.y),
+        (pet_size.width, pet_size.height),
+        (chat_size.width, chat_size.height),
+        (work_area.position.x, work_area.position.y),
+        (work_area.size.width, work_area.size.height),
+    );
+    chat.set_position(PhysicalPosition::new(x, y))
+        .map_err(|error| format!("failed to position chat window: {error}"))
 }
 
 /// Horizontally and vertically center a window in the monitor work area.
@@ -326,13 +492,11 @@ pub fn show_chat_near_pet(app: AppHandle) -> Result<(), String> {
         .get_webview_window("chat")
         .ok_or_else(|| "chat window not found".to_string())?;
 
+    // Always dock beside the pet: hide/re-open and pet moves should follow the icon.
+    place_chat_near_pet(&app, &chat)?;
     chat.show()
         .map_err(|error| format!("failed to show chat window: {error}"))?;
-    // First open only: place bottom-center. Later opens keep the last position
-    // (including after hide), so double-clicks / re-opens do not jump.
-    if !CHAT_HAS_BEEN_SHOWN.swap(true, Ordering::SeqCst) {
-        place_bottom_centered(&chat, CHAT_BOTTOM_GAP_LOGICAL)?;
-    }
+    apply_window_deactivate_policy(app.clone())?;
     chat.set_focus()
         .map_err(|error| format!("failed to focus chat window: {error}"))?;
     let _ = chat.emit("chat-shown", ());
@@ -366,6 +530,7 @@ pub fn show_settings(app: AppHandle) -> Result<(), String> {
     settings
         .show()
         .map_err(|error| format!("failed to show settings window: {error}"))?;
+    apply_window_deactivate_policy(app.clone())?;
     // First open only: true center. Later opens (and tab refits) keep position.
     if !SETTINGS_HAS_BEEN_SHOWN.swap(true, Ordering::SeqCst) {
         place_centered(&settings)?;

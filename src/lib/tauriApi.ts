@@ -24,6 +24,8 @@ export const tauriApi = {
   applyBottomAnchoredSize: (width: number, height: number, animate = false) =>
     invoke<void>("apply_bottom_anchored_size", { width, height, animate }),
   reloadHotkeys: () => invoke<void>("reload_hotkeys"),
+  applyWindowDeactivatePolicy: () =>
+    invoke<void>("apply_window_deactivate_policy"),
   emitAuthUpdated: () => emit("auth-updated"),
   listenAuthUpdated: (handler: () => void) => listen("auth-updated", handler),
   listenChatShown: (handler: () => void) => listen("chat-shown", handler),

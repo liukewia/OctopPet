@@ -21,9 +21,10 @@ pub fn run() {
                     }
                 }
             }
-            tauri::WindowEvent::Focused(_)
-            | tauri::WindowEvent::ThemeChanged(_)
-            | tauri::WindowEvent::ScaleFactorChanged { .. }
+            tauri::WindowEvent::Focused(focused) => {
+                window_cmd::handle_window_focus_change(window, *focused);
+            }
+            tauri::WindowEvent::ThemeChanged(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
                 if window.label() == "pet" =>
             {
                 window_cmd::ensure_pet_transparent(window.app_handle());
@@ -39,10 +40,8 @@ pub fn run() {
             }
             tray::setup(app)?;
             window_cmd::ensure_pet_transparent(app.handle());
+            window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
             window_cmd::spawn_pet_transparency_watchdog(app.handle());
-            if let Some(chat) = app.get_webview_window("chat") {
-                let _ = chat.set_resizable(false);
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,6 +59,7 @@ pub fn run() {
             window_cmd::place_window_bottom_center,
             window_cmd::place_window_centered,
             window_cmd::apply_bottom_anchored_size,
+            window_cmd::apply_window_deactivate_policy,
             tray::reload_hotkeys,
         ])
         .run(tauri::generate_context!())
