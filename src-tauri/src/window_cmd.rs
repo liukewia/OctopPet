@@ -106,6 +106,8 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
 
 #[cfg(windows)]
 mod windows_dwm {
+    use std::ffi::c_void;
+
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use tauri::WebviewWindow;
 
@@ -114,13 +116,37 @@ mod windows_dwm {
     const DWMWA_BORDER_COLOR: u32 = 34;
     const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     const DWMWCP_DONOTROUND: i32 = 1;
+    /// Win11 22H2+ — disable Mica/Acrylic so DWM does not paint an opaque sheet.
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMSBT_NONE: i32 = 1;
+
+    const DWM_BB_ENABLE: u32 = 0x1;
+    const DWM_BB_BLURREGION: u32 = 0x2;
+
+    const ACCENT_ENABLE_TRANSPARENTGRADIENT: u32 = 2;
+    const WCA_ACCENT_POLICY: u32 = 0x13;
 
     #[repr(C)]
-    struct Margins {
-        cx_left_width: i32,
-        cx_right_width: i32,
-        cy_top_height: i32,
-        cy_bottom_height: i32,
+    struct BlurBehind {
+        dw_flags: u32,
+        f_enable: i32,
+        h_rgn_blur: *mut c_void,
+        f_transition_on_maximized: i32,
+    }
+
+    #[repr(C)]
+    struct AccentPolicy {
+        accent_state: u32,
+        accent_flags: u32,
+        gradient_color: u32,
+        animation_id: u32,
+    }
+
+    #[repr(C)]
+    struct WindowCompositionAttribData {
+        attrib: u32,
+        pv_data: *mut c_void,
+        cb_data: usize,
     }
 
     #[link(name = "dwmapi")]
@@ -128,10 +154,76 @@ mod windows_dwm {
         fn DwmSetWindowAttribute(
             hwnd: isize,
             dw_attribute: u32,
-            pv_attribute: *const std::ffi::c_void,
+            pv_attribute: *const c_void,
             cb_attribute: u32,
         ) -> i32;
-        fn DwmExtendFrameIntoClientArea(hwnd: isize, pmarinset: *const Margins) -> i32;
+        fn DwmEnableBlurBehindWindow(hwnd: isize, blur: *const BlurBehind) -> i32;
+    }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) -> *mut c_void;
+        fn DeleteObject(ho: *mut c_void) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleA(name: *const u8) -> isize;
+        fn GetProcAddress(module: isize, name: *const u8) -> *const c_void;
+    }
+
+    fn set_window_attribute(hwnd: isize, attribute: u32, value: *const c_void, size: u32) {
+        unsafe {
+            let _ = DwmSetWindowAttribute(hwnd, attribute, value, size);
+        }
+    }
+
+    /// Empty blur region = fully transparent client (same path tao uses at create).
+    fn enable_empty_blur_behind(hwnd: isize) {
+        unsafe {
+            let region = CreateRectRgn(0, 0, -1, -1);
+            let blur = BlurBehind {
+                dw_flags: DWM_BB_ENABLE | DWM_BB_BLURREGION,
+                f_enable: 1,
+                h_rgn_blur: region,
+                f_transition_on_maximized: 0,
+            };
+            let _ = DwmEnableBlurBehindWindow(hwnd, &blur);
+            if !region.is_null() {
+                let _ = DeleteObject(region);
+            }
+        }
+    }
+
+    /// Win10+ overlay path: transparent HWND backdrop so WebView2 alpha shows the desktop.
+    fn enable_transparent_accent(hwnd: isize) {
+        type SetWindowCompositionAttribute =
+            unsafe extern "system" fn(isize, *mut WindowCompositionAttribData) -> i32;
+        unsafe {
+            let user32 = GetModuleHandleA(b"user32.dll\0".as_ptr());
+            if user32 == 0 {
+                return;
+            }
+            let proc = GetProcAddress(user32, b"SetWindowCompositionAttribute\0".as_ptr());
+            if proc.is_null() {
+                return;
+            }
+            // SAFETY: GetProcAddress returned a user32 export with this signature.
+            let set: SetWindowCompositionAttribute =
+                std::mem::transmute::<*const c_void, SetWindowCompositionAttribute>(proc);
+            let mut policy = AccentPolicy {
+                accent_state: ACCENT_ENABLE_TRANSPARENTGRADIENT,
+                accent_flags: 2,
+                gradient_color: 0,
+                animation_id: 0,
+            };
+            let mut data = WindowCompositionAttribData {
+                attrib: WCA_ACCENT_POLICY,
+                pv_data: (&mut policy as *mut AccentPolicy).cast(),
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set(hwnd, &mut data);
+        }
     }
 
     pub fn apply_transparent_chrome(window: &WebviewWindow) {
@@ -139,32 +231,31 @@ mod windows_dwm {
             Some(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
             _ => return,
         };
-        unsafe {
-            let color = COLOR_NONE;
-            let _ = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_BORDER_COLOR,
-                (&color as *const u32).cast(),
-                std::mem::size_of_val(&color) as u32,
-            );
-            let preference = DWMWCP_DONOTROUND;
-            let _ = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                (&preference as *const i32).cast(),
-                std::mem::size_of_val(&preference) as u32,
-            );
-            // Margins of -1 turn the HWND into a DWM "sheet of glass":
-            // white client fill + caption buttons on frameless windows.
-            // Keep the frame collapsed so only WebView2 pixels show.
-            let margins = Margins {
-                cx_left_width: 0,
-                cx_right_width: 0,
-                cy_top_height: 0,
-                cy_bottom_height: 0,
-            };
-            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
-        }
+        let color = COLOR_NONE;
+        set_window_attribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&color as *const u32).cast(),
+            std::mem::size_of_val(&color) as u32,
+        );
+        let preference = DWMWCP_DONOTROUND;
+        set_window_attribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&preference as *const i32).cast(),
+            std::mem::size_of_val(&preference) as u32,
+        );
+        let backdrop = DWMSBT_NONE;
+        set_window_attribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&backdrop as *const i32).cast(),
+            std::mem::size_of_val(&backdrop) as u32,
+        );
+        // Do not call DwmExtendFrameIntoClientArea: margins of -1 paint a white
+        // glass sheet + caption buttons; margins of 0 undo tao's blur-behind.
+        enable_empty_blur_behind(hwnd);
+        enable_transparent_accent(hwnd);
     }
 }
 
