@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Windows pet and chat/settings no longer show a rectangular OS frame around transparent rounded chrome
+- Windows pet and chat/settings hide the DWM 1px border without extending the glass frame (which painted a white box and caption buttons)
 - macOS close traffic light shows × on hover and a pressed state
 - Clicking the pet again reopens chat beside the icon instead of restoring the last screen position
 - Chat window height no longer snaps when starting a new conversation or sending the first message; resize stays bottom-anchored and eases over 360ms
