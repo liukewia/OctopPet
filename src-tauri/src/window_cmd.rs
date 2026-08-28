@@ -154,11 +154,14 @@ mod windows_dwm {
                 (&preference as *const i32).cast(),
                 std::mem::size_of_val(&preference) as u32,
             );
+            // Margins of -1 turn the HWND into a DWM "sheet of glass":
+            // white client fill + caption buttons on frameless windows.
+            // Keep the frame collapsed so only WebView2 pixels show.
             let margins = Margins {
-                cx_left_width: -1,
-                cx_right_width: -1,
-                cy_top_height: -1,
-                cy_bottom_height: -1,
+                cx_left_width: 0,
+                cx_right_width: 0,
+                cy_top_height: 0,
+                cy_bottom_height: 0,
             };
             let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
         }
@@ -178,6 +181,9 @@ fn apply_windows_dwm_transparent_chrome(window: &WebviewWindow) {
 pub fn ensure_dialog_window_transparent(window: &WebviewWindow) {
     #[cfg(windows)]
     {
+        if let Err(error) = window.set_decorations(false) {
+            eprintln!("failed to disable {} decorations: {error}", window.label());
+        }
         if let Err(error) = window.set_shadow(false) {
             eprintln!("failed to disable {} shadow: {error}", window.label());
         }
@@ -236,6 +242,9 @@ pub fn ensure_pet_transparent(app: &AppHandle) {
         return;
     };
     let _ = pet.set_focusable(false);
+    if let Err(error) = pet.set_decorations(false) {
+        eprintln!("failed to disable pet decorations: {error}");
+    }
     if let Err(error) = pet.set_shadow(false) {
         eprintln!("failed to disable pet shadow: {error}");
     }
