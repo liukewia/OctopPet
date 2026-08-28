@@ -95,9 +95,19 @@ describe("PetWindow", () => {
     render(<PetWindow />);
     await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalled());
 
+    mocks.clearPetWebviewChrome.mockClear();
     fireEvent.click(screen.getByTestId("pet-drag-region"));
 
     await waitFor(() => expect(mocks.showChatNearPet).toHaveBeenCalledOnce());
+    expect(mocks.clearPetWebviewChrome).not.toHaveBeenCalled();
+  });
+
+  it("blocks text selection on the pet surface", () => {
+    render(<PetWindow />);
+
+    const event = new Event("selectstart", { bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it("starts drag after pointer moves beyond threshold", async () => {

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Clicking the pet no longer flashes a white square over the mascot
 - Windows pet and chat/settings hide the DWM 1px border without extending the glass frame (which painted a white box and caption buttons)
 - macOS close traffic light shows × on hover and a pressed state
 - Clicking the pet again reopens chat beside the icon instead of restoring the last screen position

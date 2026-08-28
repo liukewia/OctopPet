@@ -9,11 +9,24 @@ html[data-window-label="pet"] #root {
   color-scheme: normal;
   background: transparent !important;
   background-color: transparent !important;
-  /* A double-click extends the selection to the nearest selectable ancestor.
-     In a non-focusable window WebKit paints that with the inactive selection
-     color — a gray box over the whole pet. Nothing here may be selectable. */
+  /* A click/double-click can paint the 160x160 window: inactive selection,
+     tap highlight, or a drag ghost. Nothing here may be selectable. */
   -webkit-user-select: none;
   user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  outline: none;
+  caret-color: transparent;
+}
+
+html[data-window-label="pet"] *,
+html[data-window-label="pet"] *::before,
+html[data-window-label="pet"] *::after {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html[data-window-label="pet"] ::selection {
@@ -29,10 +42,14 @@ html[data-window-label="pet"] ::selection {
   user-select: none;
   background: transparent;
   background-color: transparent;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .pet-window:active {
   cursor: grabbing;
+  background: transparent;
+  background-color: transparent;
 }
 
 .mascot-image {
@@ -40,4 +57,6 @@ html[data-window-label="pet"] ::selection {
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+  -webkit-user-drag: none;
+  user-select: none;
 }

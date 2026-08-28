@@ -628,9 +628,11 @@ pub fn show_chat_near_pet(app: AppHandle) -> Result<(), String> {
 
     // Always dock beside the pet: hide/re-open and pet moves should follow the icon.
     place_chat_near_pet(&app, &chat)?;
+    // Apply chrome before the first paint so show() does not flash a white HWND.
+    ensure_dialog_window_transparent(&chat);
+    ensure_pet_transparent(&app);
     chat.show()
         .map_err(|error| format!("failed to show chat window: {error}"))?;
-    ensure_dialog_window_transparent(&chat);
     apply_window_deactivate_policy(app.clone())?;
     chat.set_focus()
         .map_err(|error| format!("failed to focus chat window: {error}"))?;
@@ -662,10 +664,10 @@ pub fn show_settings(app: AppHandle) -> Result<(), String> {
     let settings = app
         .get_webview_window("settings")
         .ok_or_else(|| "settings window not found".to_string())?;
+    ensure_dialog_window_transparent(&settings);
     settings
         .show()
         .map_err(|error| format!("failed to show settings window: {error}"))?;
-    ensure_dialog_window_transparent(&settings);
     apply_window_deactivate_policy(app.clone())?;
     // First open only: true center. Later opens (and tab refits) keep position.
     if !SETTINGS_HAS_BEEN_SHOWN.swap(true, Ordering::SeqCst) {
