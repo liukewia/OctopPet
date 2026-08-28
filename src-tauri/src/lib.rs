@@ -3,8 +3,6 @@ pub mod secrets_cmd;
 pub mod tray;
 pub mod window_cmd;
 
-use tauri::Manager;
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -24,10 +22,8 @@ pub fn run() {
             tauri::WindowEvent::Focused(focused) => {
                 window_cmd::handle_window_focus_change(window, *focused);
             }
-            tauri::WindowEvent::ThemeChanged(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
-                if window.label() == "pet" =>
-            {
-                window_cmd::ensure_pet_transparent(window.app_handle());
+            tauri::WindowEvent::ThemeChanged(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                window_cmd::ensure_window_surface_transparent(window);
             }
             _ => {}
         })
@@ -40,6 +36,7 @@ pub fn run() {
             }
             tray::setup(app)?;
             window_cmd::ensure_pet_transparent(app.handle());
+            window_cmd::ensure_dialog_windows_transparent(app.handle());
             window_cmd::apply_window_deactivate_policy(app.handle().clone())?;
             window_cmd::spawn_pet_transparency_watchdog(app.handle());
             Ok(())

@@ -12,8 +12,8 @@ use octop_pet_lib::{
     },
     window_cmd::{
         bottom_anchored_position, bottom_centered_position, centered_position, chat_position,
-        home_url, should_hide_on_close, should_hide_on_unfocus, CHAT_BOTTOM_GAP_LOGICAL,
-        RESIZE_ANIMATION_DURATION,
+        home_url, should_hide_on_close, should_hide_on_unfocus, transparent_chrome_target,
+        TransparentChromeTarget, CHAT_BOTTOM_GAP_LOGICAL, RESIZE_ANIMATION_DURATION,
     },
 };
 
@@ -286,4 +286,21 @@ fn windows_open_truly_centered() {
         centered_position((480, 360), (100, 50), (1000, 800)),
         (360, 270) // 100+(1000-480)/2=360, 50+(800-360)/2=270
     );
+}
+
+#[test]
+fn transparent_chrome_targets_pet_and_dialogs() {
+    assert_eq!(
+        transparent_chrome_target("pet"),
+        Some(TransparentChromeTarget::Pet)
+    );
+    assert_eq!(
+        transparent_chrome_target("chat"),
+        Some(TransparentChromeTarget::Dialog)
+    );
+    assert_eq!(
+        transparent_chrome_target("settings"),
+        Some(TransparentChromeTarget::Dialog)
+    );
+    assert_eq!(transparent_chrome_target("tray"), None);
 }

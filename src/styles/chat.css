@@ -8,7 +8,9 @@ html[data-window-label="chat"] #root {
   overflow: hidden;
   background: transparent;
   color: #f5f5f7;
-  color-scheme: dark;
+  /* Keep the page canvas clear. `color-scheme: dark` on html paints an
+     opaque WebView2/DWM sheet that shows as a rectangular frame. */
+  color-scheme: normal;
 }
 
 html[data-window-label="chat"].chat-expanded,
@@ -68,6 +70,7 @@ html[data-window-label="chat"] *::-webkit-scrollbar-button {
   border: 1px solid #3a3a3c;
   border-radius: 16px;
   color: #f5f5f7;
+  color-scheme: dark;
 }
 
 /* Compact: fill the OS window so the empty state can start taller

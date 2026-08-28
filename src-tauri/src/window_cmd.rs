@@ -104,8 +104,132 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
     }
 }
 
+#[cfg(windows)]
+mod windows_dwm {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use tauri::WebviewWindow;
+
+    /// Windows 11 DWMWA_COLOR_NONE — hide the 1px HWND border.
+    const COLOR_NONE: u32 = 0xFFFF_FFFE;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_DONOTROUND: i32 = 1;
+
+    #[repr(C)]
+    struct Margins {
+        cx_left_width: i32,
+        cx_right_width: i32,
+        cy_top_height: i32,
+        cy_bottom_height: i32,
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            dw_attribute: u32,
+            pv_attribute: *const std::ffi::c_void,
+            cb_attribute: u32,
+        ) -> i32;
+        fn DwmExtendFrameIntoClientArea(hwnd: isize, pmarinset: *const Margins) -> i32;
+    }
+
+    pub fn apply_transparent_chrome(window: &WebviewWindow) {
+        let hwnd = match window.window_handle().ok().map(|h| h.as_raw()) {
+            Some(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
+            _ => return,
+        };
+        unsafe {
+            let color = COLOR_NONE;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                (&color as *const u32).cast(),
+                std::mem::size_of_val(&color) as u32,
+            );
+            let preference = DWMWCP_DONOTROUND;
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&preference as *const i32).cast(),
+                std::mem::size_of_val(&preference) as u32,
+            );
+            let margins = Margins {
+                cx_left_width: -1,
+                cx_right_width: -1,
+                cy_top_height: -1,
+                cy_bottom_height: -1,
+            };
+            let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_windows_dwm_transparent_chrome(_window: &WebviewWindow) {}
+
+#[cfg(windows)]
+fn apply_windows_dwm_transparent_chrome(window: &WebviewWindow) {
+    windows_dwm::apply_transparent_chrome(window);
+}
+
+/// Chat/settings: on Windows, OS `shadow` is a rectangular NC inset that
+/// reads as an outer frame around the CSS-rounded card.
+pub fn ensure_dialog_window_transparent(window: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        if let Err(error) = window.set_shadow(false) {
+            eprintln!("failed to disable {} shadow: {error}", window.label());
+        }
+        if let Err(error) = window.set_background_color(Some(Color(0, 0, 0, 0))) {
+            eprintln!("failed to clear {} background: {error}", window.label());
+        }
+        apply_windows_dwm_transparent_chrome(window);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransparentChromeTarget {
+    Pet,
+    Dialog,
+}
+
+pub fn transparent_chrome_target(label: &str) -> Option<TransparentChromeTarget> {
+    match label {
+        "pet" => Some(TransparentChromeTarget::Pet),
+        "chat" | "settings" => Some(TransparentChromeTarget::Dialog),
+        _ => None,
+    }
+}
+
+pub fn ensure_window_surface_transparent(window: &tauri::Window) {
+    match transparent_chrome_target(window.label()) {
+        Some(TransparentChromeTarget::Pet) => ensure_pet_transparent(window.app_handle()),
+        Some(TransparentChromeTarget::Dialog) => {
+            if let Some(win) = window.app_handle().get_webview_window(window.label()) {
+                ensure_dialog_window_transparent(&win);
+            }
+        }
+        None => {}
+    }
+}
+
+/// Apply Windows transparent chrome to chat/settings (pet is handled separately).
+pub fn ensure_dialog_windows_transparent(app: &AppHandle) {
+    for label in ["chat", "settings"] {
+        if let Some(win) = app.get_webview_window(label) {
+            ensure_dialog_window_transparent(&win);
+        }
+    }
+}
+
 /// macOS often paints an opaque gray canvas / OS shadow on the pet window
 /// when it enters drag mode or resigns key (e.g. chat takes focus).
+/// Windows 11 also draws a 1px HWND border and an opaque client canvas.
 /// Re-assert clear background / no OS shadow on the main thread.
 pub fn ensure_pet_transparent(app: &AppHandle) {
     let Some(pet) = app.get_webview_window("pet") else {
@@ -134,6 +258,7 @@ pub fn ensure_pet_transparent(app: &AppHandle) {
             }
         });
     }
+    apply_windows_dwm_transparent_chrome(&pet);
     keep_visible_on_app_deactivate(&pet);
 
     // Force the page canvas clear in case CSS left a gray layer.
@@ -496,6 +621,7 @@ pub fn show_chat_near_pet(app: AppHandle) -> Result<(), String> {
     place_chat_near_pet(&app, &chat)?;
     chat.show()
         .map_err(|error| format!("failed to show chat window: {error}"))?;
+    ensure_dialog_window_transparent(&chat);
     apply_window_deactivate_policy(app.clone())?;
     chat.set_focus()
         .map_err(|error| format!("failed to focus chat window: {error}"))?;
@@ -530,6 +656,7 @@ pub fn show_settings(app: AppHandle) -> Result<(), String> {
     settings
         .show()
         .map_err(|error| format!("failed to show settings window: {error}"))?;
+    ensure_dialog_window_transparent(&settings);
     apply_window_deactivate_policy(app.clone())?;
     // First open only: true center. Later opens (and tab refits) keep position.
     if !SETTINGS_HAS_BEEN_SHOWN.swap(true, Ordering::SeqCst) {
