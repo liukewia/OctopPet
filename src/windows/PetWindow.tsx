@@ -112,6 +112,12 @@ export default function PetWindow() {
       );
     };
 
+    const onSelectStart = (event: Event) => event.preventDefault();
+    document.addEventListener("selectstart", onSelectStart);
+    registerUnlistener(() =>
+      document.removeEventListener("selectstart", onSelectStart),
+    );
+
     void initialize();
 
     return () => {
@@ -123,6 +129,7 @@ export default function PetWindow() {
   const handlePointerDown = (event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
 
+    clearPetSelection();
     pointerDownRef.current = true;
     movedSincePointerDownRef.current = false;
     dragStartedRef.current = false;
@@ -148,8 +155,6 @@ export default function PetWindow() {
     pointerDownRef.current = false;
     clearPetSelection();
     if (movedSincePointerDownRef.current) return;
-
-    void clearPetWebviewChrome(getPetWebviewWindow());
 
     const now = Date.now();
     if (now - lastOpenAtRef.current < 400) return;
@@ -182,6 +187,7 @@ export default function PetWindow() {
         event.stopPropagation();
         clearPetSelection();
       }}
+      onDragStart={(event) => event.preventDefault()}
       onClick={handleClick}
       onContextMenu={(event) => {
         event.preventDefault();
