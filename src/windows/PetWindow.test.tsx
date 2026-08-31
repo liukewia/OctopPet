@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   clearPetWebviewChrome: vi.fn(),
   setPetWebviewPosition: vi.fn(),
   startPetWebviewDrag: vi.fn(),
+  setPetWebviewLogicalPosition: vi.fn(),
+  petUsesManualDrag: vi.fn(),
   onPetWebviewMoved: vi.fn(),
   onPetWebviewFocusChanged: vi.fn(),
   getPetWebviewWindow: vi.fn(),
@@ -46,6 +48,8 @@ vi.mock("../lib/tauriWebviewApi", () => ({
   clearPetWebviewChrome: mocks.clearPetWebviewChrome,
   setPetWebviewPosition: mocks.setPetWebviewPosition,
   startPetWebviewDrag: mocks.startPetWebviewDrag,
+  setPetWebviewLogicalPosition: mocks.setPetWebviewLogicalPosition,
+  petUsesManualDrag: mocks.petUsesManualDrag,
   onPetWebviewMoved: mocks.onPetWebviewMoved,
   onPetWebviewFocusChanged: mocks.onPetWebviewFocusChanged,
   getPetWebviewWindow: mocks.getPetWebviewWindow,
@@ -75,6 +79,8 @@ describe("PetWindow", () => {
     mocks.clearPetWebviewChrome.mockResolvedValue(undefined);
     mocks.setPetWebviewPosition.mockResolvedValue(undefined);
     mocks.startPetWebviewDrag.mockResolvedValue(undefined);
+    mocks.setPetWebviewLogicalPosition.mockResolvedValue(undefined);
+    mocks.petUsesManualDrag.mockReturnValue(false);
     mocks.showPetContextMenu.mockResolvedValue(undefined);
     mocks.getPetWebviewWindow.mockReturnValue({});
     mocks.onPetWebviewMoved.mockImplementation(async (handler) => {
@@ -121,6 +127,34 @@ describe("PetWindow", () => {
     await waitFor(() =>
       expect(mocks.startPetWebviewDrag).toHaveBeenCalledOnce(),
     );
+    expect(mocks.setPetWebviewLogicalPosition).not.toHaveBeenCalled();
+  });
+
+  it("moves the window with setPosition on Windows instead of OS drag", async () => {
+    mocks.petUsesManualDrag.mockReturnValue(true);
+    render(<PetWindow />);
+    await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalled());
+
+    const region = screen.getByTestId("pet-drag-region");
+    fireEvent.pointerDown(region, {
+      clientX: 10,
+      clientY: 12,
+      screenX: 100,
+      screenY: 200,
+      button: 0,
+    });
+    fireEvent.pointerMove(region, {
+      clientX: 30,
+      clientY: 12,
+      screenX: 120,
+      screenY: 200,
+      button: 0,
+    });
+
+    await waitFor(() =>
+      expect(mocks.setPetWebviewLogicalPosition).toHaveBeenCalledWith(110, 188),
+    );
+    expect(mocks.startPetWebviewDrag).not.toHaveBeenCalled();
   });
 
   it("does not open chat after a drag click", async () => {

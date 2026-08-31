@@ -9,6 +9,8 @@ import {
   getPetWebviewWindow,
   onPetWebviewFocusChanged,
   onPetWebviewMoved,
+  petUsesManualDrag,
+  setPetWebviewLogicalPosition,
   setPetWebviewPosition,
   startPetWebviewDrag,
 } from "../lib/tauriWebviewApi";
@@ -27,6 +29,7 @@ export default function PetWindow() {
   const configRef = useRef<AppConfig>(DEFAULT_APP_CONFIG);
   const pointerDownRef = useRef(false);
   const pointerStartRef = useRef({ x: 0, y: 0 });
+  const grabOffsetRef = useRef({ x: 0, y: 0 });
   const movedSincePointerDownRef = useRef(false);
   const dragStartedRef = useRef(false);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -134,6 +137,10 @@ export default function PetWindow() {
     movedSincePointerDownRef.current = false;
     dragStartedRef.current = false;
     pointerStartRef.current = { x: event.clientX, y: event.clientY };
+    grabOffsetRef.current = { x: event.clientX, y: event.clientY };
+    if (petUsesManualDrag() && event.currentTarget.setPointerCapture) {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLElement>) => {
@@ -143,12 +150,31 @@ export default function PetWindow() {
       event.clientX - pointerStartRef.current.x,
       event.clientY - pointerStartRef.current.y,
     );
-    if (distance <= CLICK_MOVE_THRESHOLD) return;
+    if (distance <= CLICK_MOVE_THRESHOLD && !dragStartedRef.current) return;
 
     movedSincePointerDownRef.current = true;
+    if (petUsesManualDrag()) {
+      dragStartedRef.current = true;
+      void setPetWebviewLogicalPosition(
+        event.screenX - grabOffsetRef.current.x,
+        event.screenY - grabOffsetRef.current.y,
+      );
+      return;
+    }
     if (dragStartedRef.current) return;
     dragStartedRef.current = true;
     void startPetWebviewDrag();
+  };
+
+  const endPointer = (event: React.PointerEvent<HTMLElement>) => {
+    if (dragStartedRef.current) {
+      void clearPetWebviewChrome(getPetWebviewWindow());
+    }
+    pointerDownRef.current = false;
+    dragStartedRef.current = false;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const handleClick = () => {
@@ -171,17 +197,8 @@ export default function PetWindow() {
       data-testid="pet-drag-region"
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
-      onPointerCancel={() => {
-        pointerDownRef.current = false;
-        dragStartedRef.current = false;
-      }}
-      onPointerUp={() => {
-        if (dragStartedRef.current) {
-          void clearPetWebviewChrome(getPetWebviewWindow());
-        }
-        pointerDownRef.current = false;
-        dragStartedRef.current = false;
-      }}
+      onPointerCancel={endPointer}
+      onPointerUp={endPointer}
       onDoubleClick={(event) => {
         event.preventDefault();
         event.stopPropagation();

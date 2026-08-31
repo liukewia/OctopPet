@@ -24,8 +24,7 @@
         "resizable": false,
         "skipTaskbar": true,
         "focus": false,
-        "focusable": false,
-        "backgroundColor": "#00000000"
+        "focusable": false
       },
       {
         "label": "chat",
