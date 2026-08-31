@@ -89,6 +89,14 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
         return;
     }
 
+    // Windows: click/focus can GDI-fill the HWND; re-clear dialog chrome so
+    // CSS border-radius corners stay transparent.
+    if focused && matches!(label, "chat" | "settings") {
+        if let Some(win) = window.app_handle().get_webview_window(label) {
+            ensure_dialog_window_transparent(&win);
+        }
+    }
+
     if keep_windows_visible() {
         if let Some(win) = window.app_handle().get_webview_window(label) {
             apply_macos_deactivate_behavior(&win, true);
@@ -107,7 +115,6 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
 #[cfg(windows)]
 mod windows_dwm {
     use std::ffi::c_void;
-    use std::sync::atomic::{AtomicBool, Ordering};
 
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use tauri::WebviewWindow;
@@ -131,8 +138,12 @@ mod windows_dwm {
 
     const GCLP_HBRBACKGROUND: i32 = -10;
     const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
     const NULL_BRUSH: i32 = 5;
     const WM_ERASEBKGND: u32 = 0x0014;
+    const WM_NCCALCSIZE: u32 = 0x0083;
+    const WM_NCPAINT: u32 = 0x0085;
+    const WM_NCACTIVATE: u32 = 0x0086;
     const WM_WINDOWPOSCHANGING: u32 = 0x0046;
     const SWP_NOCOPYBITS: u32 = 0x0100;
     const SWP_NOSIZE: u32 = 0x0001;
@@ -146,9 +157,13 @@ mod windows_dwm {
     const WS_MINIMIZEBOX: u32 = 0x0002_0000;
     const WS_MAXIMIZEBOX: u32 = 0x0001_0000;
     const WS_POPUP: u32 = 0x8000_0000;
+    const WS_EX_DLGMODALFRAME: u32 = 0x0000_0001;
+    const WS_EX_WINDOWEDGE: u32 = 0x0000_0100;
+    const WS_EX_CLIENTEDGE: u32 = 0x0000_0200;
+    const WS_EX_STATICEDGE: u32 = 0x0002_0000;
+    /// Win11 — hide caption fill when a residual NC strip remains.
+    const DWMWA_CAPTION_COLOR: u32 = 35;
     const PET_SUBCLASS_ID: usize = 0x0C70_B7E7;
-
-    static PET_SUBCLASSED: AtomicBool = AtomicBool::new(false);
 
     #[repr(C)]
     struct BlurBehind {
@@ -252,18 +267,23 @@ mod windows_dwm {
             let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
             let stripped = (style | WS_POPUP)
                 & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
-            if stripped != style {
-                let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
-                let _ = SetWindowPos(
-                    hwnd,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-                );
-            }
+            let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
+
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let ex_stripped =
+                ex & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_stripped as isize);
+
+            // Always FRAMECHANGED so WM_NCCALCSIZE runs even when styles look unchanged.
+            let _ = SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
     }
 
@@ -279,8 +299,9 @@ mod windows_dwm {
         1
     }
 
-    /// Pet HWND: never GDI-fill the client (that is the white square), and do
-    /// not blit stale bits while the window moves.
+    /// Pet HWND: never GDI-fill the client (that is the white square), force
+    /// zero non-client area (the white title strip), and do not blit stale
+    /// bits while the window moves.
     ///
     /// Codex's Electron pet never hits this path: Chromium owns a layered
     /// window with per-pixel alpha and moves via `setBounds`. tao instead
@@ -298,6 +319,10 @@ mod windows_dwm {
         unsafe {
             match msg {
                 WM_ERASEBKGND => 1,
+                // wparam TRUE: client rect == window rect → no title-bar strip.
+                WM_NCCALCSIZE if wparam != 0 => 0,
+                WM_NCPAINT => 0,
+                WM_NCACTIVATE => 1,
                 WM_WINDOWPOSCHANGING => {
                     if lparam != 0 {
                         let pos = lparam as *mut WindowPos;
@@ -311,9 +336,6 @@ mod windows_dwm {
     }
 
     fn install_pet_subclass(hwnd: isize) {
-        if PET_SUBCLASSED.swap(true, Ordering::SeqCst) {
-            return;
-        }
         set_hollow_background_brush(hwnd);
         unsafe {
             let init = InitCtrls {
@@ -322,8 +344,11 @@ mod windows_dwm {
             };
             let _ = InitCommonControlsEx(&init);
             let _ = EnumChildWindows(hwnd, Some(clear_child_brush), 0);
+            // Same subclass id on different HWNDs is fine; repeat calls for the
+            // same hwnd+id are ignored by comctl32.
             let _ = SetWindowSubclass(hwnd, pet_subclass_proc, PET_SUBCLASS_ID, 0);
         }
+        strip_caption(hwnd);
     }
 
     fn set_window_attribute(hwnd: isize, attribute: u32, value: *const c_void, size: u32) {
@@ -388,6 +413,12 @@ mod windows_dwm {
             (&color as *const u32).cast(),
             std::mem::size_of_val(&color) as u32,
         );
+        set_window_attribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            (&color as *const u32).cast(),
+            std::mem::size_of_val(&color) as u32,
+        );
         let preference = DWMWCP_DONOTROUND;
         set_window_attribute(
             hwnd,
@@ -426,9 +457,9 @@ mod windows_dwm {
             _ => return,
         };
         apply_transparent_chrome_hwnd(hwnd);
-        if window.label() == "pet" {
-            install_pet_subclass(hwnd);
-        }
+        // Pet + chat/settings all need hollow erase; otherwise CSS border-radius
+        // corners show the HWND white fill (especially on focus/click).
+        install_pet_subclass(hwnd);
     }
 }
 
@@ -445,14 +476,10 @@ fn apply_windows_dwm_transparent_chrome(window: &WebviewWindow) {
 pub fn ensure_dialog_window_transparent(window: &WebviewWindow) {
     #[cfg(windows)]
     {
-        if let Err(error) = window.set_decorations(false) {
-            eprintln!("failed to disable {} decorations: {error}", window.label());
-        }
-        if let Err(error) = window.set_shadow(false) {
-            eprintln!("failed to disable {} shadow: {error}", window.label());
-        }
-        if let Err(error) = window.set_background_color(Some(Color(0, 0, 0, 0))) {
-            eprintln!("failed to clear {} background: {error}", window.label());
+        // Avoid Tauri set_decorations/set_shadow — they rewrite GWL_STYLE and
+        // can restore a caption. Strip styles in DWM chrome instead.
+        if let Err(error) = window.as_ref().set_background_color(Some(Color(0, 0, 0, 0))) {
+            eprintln!("failed to clear {} webview background: {error}", window.label());
         }
         apply_windows_dwm_transparent_chrome(window);
     }
@@ -506,6 +533,8 @@ pub fn ensure_pet_transparent(app: &AppHandle) {
         return;
     };
     let _ = pet.set_focusable(false);
+    // Empty title so a residual Windows caption bar does not show "OctopPet".
+    let _ = pet.set_title("");
     // Windows: Tauri set_decorations/set_shadow rewrites GWL_STYLE and can
     // restore WS_CAPTION (the title-bar window after clicking the pet).
     // Strip the caption in DWM chrome instead.

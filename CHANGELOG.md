@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Windows: dragging the pet no longer shows a white square (manual move + skip HWND GDI fill; tao ignores background alpha)
 - Windows: clicking the pet no longer restores a titled OS window (skip set_decorations/set_shadow; strip WS_CAPTION in DWM)
+- Windows pet window title is empty so no "OctopPet" caption sits above the mascot
+- Windows: zero pet non-client area (WM_NCCALCSIZE) so the empty white title strip is gone
+- Windows: chat/settings rounded corners no longer flash a white HWND fill on click/focus
 - Windows pet and chat/settings use DWM blur-behind (not extend-frame) so the mascot is not a white square
 - Clicking the pet no longer flashes a white square over the mascot
 - macOS close traffic light shows × on hover and a pressed state

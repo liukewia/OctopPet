@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "pet",
-        "title": "OctopPet",
+        "title": "",
         "width": 160,
         "height": 160,
         "decorations": false,
@@ -37,8 +37,7 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
-        "resizable": true,
-        "backgroundColor": "#00000000"
+        "resizable": true
       },
       {
         "label": "settings",
@@ -49,8 +48,7 @@
         "resizable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": true,
-        "backgroundColor": "#00000000"
+        "shadow": true
       }
     ],
     "security": {
