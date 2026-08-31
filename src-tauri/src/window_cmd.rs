@@ -89,6 +89,14 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
         return;
     }
 
+    // Windows: click/focus can GDI-fill the HWND; re-clear dialog chrome so
+    // CSS border-radius corners stay transparent.
+    if focused && matches!(label, "chat" | "settings") {
+        if let Some(win) = window.app_handle().get_webview_window(label) {
+            ensure_dialog_window_transparent(&win);
+        }
+    }
+
     if keep_windows_visible() {
         if let Some(win) = window.app_handle().get_webview_window(label) {
             apply_macos_deactivate_behavior(&win, true);
@@ -104,18 +112,457 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
     }
 }
 
+#[cfg(windows)]
+mod windows_dwm {
+    use std::ffi::{c_char, c_void};
+
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use tauri::WebviewWindow;
+
+    /// Windows 11 DWMWA_COLOR_NONE — hide the 1px HWND border.
+    const COLOR_NONE: u32 = 0xFFFF_FFFE;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_DONOTROUND: i32 = 1;
+    /// Win11 22H2+ — disable Mica/Acrylic so DWM does not paint an opaque sheet.
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMSBT_NONE: i32 = 1;
+    /// Skip DWM move/restore animations; those snapshots show a white HWND.
+    const DWMWA_TRANSITIONS_FORCEDISABLED: u32 = 3;
+
+    const DWM_BB_ENABLE: u32 = 0x1;
+    const DWM_BB_BLURREGION: u32 = 0x2;
+
+    const ACCENT_ENABLE_TRANSPARENTGRADIENT: u32 = 2;
+    const WCA_ACCENT_POLICY: u32 = 0x13;
+
+    const GCLP_HBRBACKGROUND: i32 = -10;
+    const GWL_STYLE: i32 = -16;
+    const GWL_EXSTYLE: i32 = -20;
+    const NULL_BRUSH: i32 = 5;
+    const WM_ERASEBKGND: u32 = 0x0014;
+    const WM_NCCALCSIZE: u32 = 0x0083;
+    const WM_NCPAINT: u32 = 0x0085;
+    const WM_NCACTIVATE: u32 = 0x0086;
+    const WM_WINDOWPOSCHANGING: u32 = 0x0046;
+    const SWP_NOCOPYBITS: u32 = 0x0100;
+    const SWP_NOSIZE: u32 = 0x0001;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const SWP_FRAMECHANGED: u32 = 0x0020;
+    const WS_CAPTION: u32 = 0x00C0_0000;
+    const WS_SYSMENU: u32 = 0x0008_0000;
+    const WS_THICKFRAME: u32 = 0x0004_0000;
+    const WS_MINIMIZEBOX: u32 = 0x0002_0000;
+    const WS_MAXIMIZEBOX: u32 = 0x0001_0000;
+    const WS_POPUP: u32 = 0x8000_0000;
+    const WS_EX_DLGMODALFRAME: u32 = 0x0000_0001;
+    const WS_EX_WINDOWEDGE: u32 = 0x0000_0100;
+    const WS_EX_CLIENTEDGE: u32 = 0x0000_0200;
+    const WS_EX_STATICEDGE: u32 = 0x0002_0000;
+    /// Win11 — hide caption fill when a residual NC strip remains.
+    const DWMWA_CAPTION_COLOR: u32 = 35;
+    const PET_SUBCLASS_ID: usize = 0x0C70_B7E7;
+
+    #[repr(C)]
+    struct BlurBehind {
+        dw_flags: u32,
+        f_enable: i32,
+        h_rgn_blur: *mut c_void,
+        f_transition_on_maximized: i32,
+    }
+
+    #[repr(C)]
+    struct AccentPolicy {
+        accent_state: u32,
+        accent_flags: u32,
+        gradient_color: u32,
+        animation_id: u32,
+    }
+
+    #[repr(C)]
+    struct WindowCompositionAttribData {
+        attrib: u32,
+        pv_data: *mut c_void,
+        cb_data: usize,
+    }
+
+    #[repr(C)]
+    struct WindowPos {
+        hwnd: isize,
+        hwnd_insert_after: isize,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        flags: u32,
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: isize,
+            dw_attribute: u32,
+            pv_attribute: *const c_void,
+            cb_attribute: u32,
+        ) -> i32;
+        fn DwmEnableBlurBehindWindow(hwnd: isize, blur: *const BlurBehind) -> i32;
+    }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) -> *mut c_void;
+        fn DeleteObject(ho: *mut c_void) -> i32;
+        fn GetStockObject(index: i32) -> *mut c_void;
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetClassLongPtrW(hwnd: isize, n_index: i32, dw_new_long: isize) -> isize;
+        fn GetWindowLongPtrW(hwnd: isize, n_index: i32) -> isize;
+        fn SetWindowLongPtrW(hwnd: isize, n_index: i32, dw_new_long: isize) -> isize;
+        fn SetWindowPos(
+            hwnd: isize,
+            insert_after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+        fn EnumChildWindows(
+            hwnd: isize,
+            callback: Option<unsafe extern "system" fn(isize, isize) -> i32>,
+            lparam: isize,
+        ) -> i32;
+    }
+
+    #[link(name = "comctl32")]
+    extern "system" {
+        fn SetWindowSubclass(
+            hwnd: isize,
+            pfn: unsafe extern "system" fn(isize, u32, usize, isize, usize, usize) -> isize,
+            uid: usize,
+            dw_ref: usize,
+        ) -> i32;
+        fn DefSubclassProc(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> isize;
+        fn InitCommonControlsEx(picce: *const InitCtrls) -> i32;
+    }
+
+    #[repr(C)]
+    struct InitCtrls {
+        size: u32,
+        icc: u32,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetModuleHandleA(name: *const c_char) -> isize;
+        fn GetProcAddress(module: isize, name: *const c_char) -> *const c_void;
+    }
+
+    fn strip_caption(hwnd: isize) {
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+            let stripped = (style | WS_POPUP)
+                & !(WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+            let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
+
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let ex_stripped = ex
+                & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_stripped as isize);
+
+            // Always FRAMECHANGED so WM_NCCALCSIZE runs even when styles look unchanged.
+            let _ = SetWindowPos(
+                hwnd,
+                0,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
+
+    fn set_hollow_background_brush(hwnd: isize) {
+        unsafe {
+            let brush = GetStockObject(NULL_BRUSH);
+            let _ = SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush as isize);
+        }
+    }
+
+    unsafe extern "system" fn clear_child_brush(hwnd: isize, _lparam: isize) -> i32 {
+        set_hollow_background_brush(hwnd);
+        1
+    }
+
+    /// Pet HWND: never GDI-fill the client (that is the white square), force
+    /// zero non-client area (the white title strip), and do not blit stale
+    /// bits while the window moves.
+    ///
+    /// Codex's Electron pet never hits this path: Chromium owns a layered
+    /// window with per-pixel alpha and moves via `setBounds`. tao instead
+    /// `FillRect`s `background_color` on WM_ERASEBKGND and ignores alpha.
+    unsafe extern "system" fn pet_subclass_proc(
+        hwnd: isize,
+        msg: u32,
+        wparam: usize,
+        lparam: isize,
+        _uid: usize,
+        _data: usize,
+    ) -> isize {
+        // SAFETY: HWND/LPARAM come from the window procedure; DefSubclassProc
+        // is the matching comctl32 pair for SetWindowSubclass.
+        unsafe {
+            match msg {
+                WM_ERASEBKGND => 1,
+                // wparam TRUE: client rect == window rect → no title-bar strip.
+                WM_NCCALCSIZE if wparam != 0 => 0,
+                WM_NCPAINT => 0,
+                WM_NCACTIVATE => 1,
+                WM_WINDOWPOSCHANGING => {
+                    if lparam != 0 {
+                        let pos = lparam as *mut WindowPos;
+                        (*pos).flags |= SWP_NOCOPYBITS;
+                    }
+                    DefSubclassProc(hwnd, msg, wparam, lparam)
+                }
+                _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+            }
+        }
+    }
+
+    fn install_pet_subclass(hwnd: isize) {
+        set_hollow_background_brush(hwnd);
+        unsafe {
+            let init = InitCtrls {
+                size: std::mem::size_of::<InitCtrls>() as u32,
+                icc: 0x0000_00FF,
+            };
+            let _ = InitCommonControlsEx(&init);
+            let _ = EnumChildWindows(hwnd, Some(clear_child_brush), 0);
+            // Same subclass id on different HWNDs is fine; repeat calls for the
+            // same hwnd+id are ignored by comctl32.
+            let _ = SetWindowSubclass(hwnd, pet_subclass_proc, PET_SUBCLASS_ID, 0);
+        }
+        strip_caption(hwnd);
+    }
+
+    fn set_window_attribute(hwnd: isize, attribute: u32, value: *const c_void, size: u32) {
+        unsafe {
+            let _ = DwmSetWindowAttribute(hwnd, attribute, value, size);
+        }
+    }
+
+    /// Empty blur region = fully transparent client (same path tao uses at create).
+    fn enable_empty_blur_behind(hwnd: isize) {
+        unsafe {
+            let region = CreateRectRgn(0, 0, -1, -1);
+            let blur = BlurBehind {
+                dw_flags: DWM_BB_ENABLE | DWM_BB_BLURREGION,
+                f_enable: 1,
+                h_rgn_blur: region,
+                f_transition_on_maximized: 0,
+            };
+            let _ = DwmEnableBlurBehindWindow(hwnd, &blur);
+            if !region.is_null() {
+                let _ = DeleteObject(region);
+            }
+        }
+    }
+
+    /// Win10+ overlay path: transparent HWND backdrop so WebView2 alpha shows the desktop.
+    fn enable_transparent_accent(hwnd: isize) {
+        type SetWindowCompositionAttribute =
+            unsafe extern "system" fn(isize, *mut WindowCompositionAttribData) -> i32;
+        unsafe {
+            let user32 = GetModuleHandleA(c"user32.dll".as_ptr());
+            if user32 == 0 {
+                return;
+            }
+            let proc = GetProcAddress(user32, c"SetWindowCompositionAttribute".as_ptr());
+            if proc.is_null() {
+                return;
+            }
+            // SAFETY: GetProcAddress returned a user32 export with this signature.
+            let set: SetWindowCompositionAttribute =
+                std::mem::transmute::<*const c_void, SetWindowCompositionAttribute>(proc);
+            let mut policy = AccentPolicy {
+                accent_state: ACCENT_ENABLE_TRANSPARENTGRADIENT,
+                accent_flags: 2,
+                gradient_color: 0,
+                animation_id: 0,
+            };
+            let mut data = WindowCompositionAttribData {
+                attrib: WCA_ACCENT_POLICY,
+                pv_data: (&mut policy as *mut AccentPolicy).cast(),
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set(hwnd, &mut data);
+        }
+    }
+
+    fn apply_transparent_chrome_hwnd(hwnd: isize) {
+        let color = COLOR_NONE;
+        set_window_attribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&color as *const u32).cast(),
+            std::mem::size_of_val(&color) as u32,
+        );
+        set_window_attribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            (&color as *const u32).cast(),
+            std::mem::size_of_val(&color) as u32,
+        );
+        let preference = DWMWCP_DONOTROUND;
+        set_window_attribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&preference as *const i32).cast(),
+            std::mem::size_of_val(&preference) as u32,
+        );
+        let backdrop = DWMSBT_NONE;
+        set_window_attribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&backdrop as *const i32).cast(),
+            std::mem::size_of_val(&backdrop) as u32,
+        );
+        let disable_transitions: i32 = 1;
+        set_window_attribute(
+            hwnd,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            (&disable_transitions as *const i32).cast(),
+            std::mem::size_of_val(&disable_transitions) as u32,
+        );
+        // Do not call DwmExtendFrameIntoClientArea: margins of -1 paint a white
+        // glass sheet + caption buttons; margins of 0 undo tao's blur-behind.
+        enable_empty_blur_behind(hwnd);
+        enable_transparent_accent(hwnd);
+        strip_caption(hwnd);
+        set_hollow_background_brush(hwnd);
+        unsafe {
+            let _ = EnumChildWindows(hwnd, Some(clear_child_brush), 0);
+        }
+    }
+
+    pub fn apply_transparent_chrome(window: &WebviewWindow) {
+        let hwnd = match window.window_handle().ok().map(|h| h.as_raw()) {
+            Some(RawWindowHandle::Win32(handle)) => handle.hwnd.get(),
+            _ => return,
+        };
+        apply_transparent_chrome_hwnd(hwnd);
+        // Pet + chat/settings all need hollow erase; otherwise CSS border-radius
+        // corners show the HWND white fill (especially on focus/click).
+        install_pet_subclass(hwnd);
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_windows_dwm_transparent_chrome(_window: &WebviewWindow) {}
+
+#[cfg(windows)]
+fn apply_windows_dwm_transparent_chrome(window: &WebviewWindow) {
+    windows_dwm::apply_transparent_chrome(window);
+}
+
+/// Chat/settings: on Windows, OS `shadow` is a rectangular NC inset that
+/// reads as an outer frame around the CSS-rounded card.
+pub fn ensure_dialog_window_transparent(window: &WebviewWindow) {
+    #[cfg(windows)]
+    {
+        // Avoid Tauri set_decorations/set_shadow — they rewrite GWL_STYLE and
+        // can restore a caption. Strip styles in DWM chrome instead.
+        if let Err(error) = window
+            .as_ref()
+            .set_background_color(Some(Color(0, 0, 0, 0)))
+        {
+            eprintln!(
+                "failed to clear {} webview background: {error}",
+                window.label()
+            );
+        }
+        apply_windows_dwm_transparent_chrome(window);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransparentChromeTarget {
+    Pet,
+    Dialog,
+}
+
+pub fn transparent_chrome_target(label: &str) -> Option<TransparentChromeTarget> {
+    match label {
+        "pet" => Some(TransparentChromeTarget::Pet),
+        "chat" | "settings" => Some(TransparentChromeTarget::Dialog),
+        _ => None,
+    }
+}
+
+pub fn ensure_window_surface_transparent(window: &tauri::Window) {
+    match transparent_chrome_target(window.label()) {
+        Some(TransparentChromeTarget::Pet) => ensure_pet_transparent(window.app_handle()),
+        Some(TransparentChromeTarget::Dialog) => {
+            if let Some(win) = window.app_handle().get_webview_window(window.label()) {
+                ensure_dialog_window_transparent(&win);
+            }
+        }
+        None => {}
+    }
+}
+
+/// Apply Windows transparent chrome to chat/settings (pet is handled separately).
+pub fn ensure_dialog_windows_transparent(app: &AppHandle) {
+    for label in ["chat", "settings"] {
+        if let Some(win) = app.get_webview_window(label) {
+            ensure_dialog_window_transparent(&win);
+        }
+    }
+}
+
 /// macOS often paints an opaque gray canvas / OS shadow on the pet window
 /// when it enters drag mode or resigns key (e.g. chat takes focus).
+/// Windows 11 also draws a 1px HWND border and an opaque client canvas.
 /// Re-assert clear background / no OS shadow on the main thread.
 pub fn ensure_pet_transparent(app: &AppHandle) {
     let Some(pet) = app.get_webview_window("pet") else {
         return;
     };
     let _ = pet.set_focusable(false);
-    if let Err(error) = pet.set_shadow(false) {
-        eprintln!("failed to disable pet shadow: {error}");
+    // Empty title so a residual Windows caption bar does not show "OctopPet".
+    let _ = pet.set_title("");
+    // Windows: Tauri set_decorations/set_shadow rewrites GWL_STYLE and can
+    // restore WS_CAPTION (the title-bar window after clicking the pet).
+    // Strip the caption in DWM chrome instead.
+    #[cfg(not(windows))]
+    {
+        if let Err(error) = pet.set_decorations(false) {
+            eprintln!("failed to disable pet decorations: {error}");
+        }
+        if let Err(error) = pet.set_shadow(false) {
+            eprintln!("failed to disable pet shadow: {error}");
+        }
     }
-    // Clears NSWindow + WKWebView (drawsBackground / underPageBackgroundColor).
+    // Windows: `WebviewWindow::set_background_color` also sets the HWND layer.
+    // tao's WM_ERASEBKGND does FillRect(RGB) and **ignores alpha**, so
+    // Color(0,0,0,0) becomes an opaque square while dragging. Codex's Electron
+    // pet avoids this because Chromium owns per-pixel alpha (no GDI fill).
+    // Keep DefaultBackgroundColor on the WebView2 controller only.
+    #[cfg(windows)]
+    if let Err(error) = pet.as_ref().set_background_color(Some(Color(0, 0, 0, 0))) {
+        eprintln!("failed to clear pet webview background: {error}");
+    }
+    #[cfg(not(windows))]
     if let Err(error) = pet.set_background_color(Some(Color(0, 0, 0, 0))) {
         eprintln!("failed to clear pet background: {error}");
     }
@@ -134,6 +581,7 @@ pub fn ensure_pet_transparent(app: &AppHandle) {
             }
         });
     }
+    apply_windows_dwm_transparent_chrome(&pet);
     keep_visible_on_app_deactivate(&pet);
 
     // Force the page canvas clear in case CSS left a gray layer.
@@ -180,9 +628,26 @@ pub fn spawn_pet_transparency_watchdog(app: &AppHandle) {
         std::thread::sleep(std::time::Duration::from_secs(2));
         let app = handle.clone();
         let _ = handle.run_on_main_thread(move || {
-            ensure_pet_transparent(&app);
+            reassert_pet_surface(&app);
         });
     });
+}
+
+/// Windows: DWM + clear canvas only. `set_shadow` / decorations every 2s
+/// re-introduces the white HWND during drag.
+fn reassert_pet_surface(app: &AppHandle) {
+    #[cfg(windows)]
+    {
+        let Some(pet) = app.get_webview_window("pet") else {
+            return;
+        };
+        apply_windows_dwm_transparent_chrome(&pet);
+        let _ = pet.as_ref().set_background_color(Some(Color(0, 0, 0, 0)));
+    }
+    #[cfg(not(windows))]
+    {
+        ensure_pet_transparent(app);
+    }
 }
 
 pub fn home_url(base_url: &str) -> Result<String, String> {
@@ -494,6 +959,9 @@ pub fn show_chat_near_pet(app: AppHandle) -> Result<(), String> {
 
     // Always dock beside the pet: hide/re-open and pet moves should follow the icon.
     place_chat_near_pet(&app, &chat)?;
+    // Apply chrome before the first paint so show() does not flash a white HWND.
+    ensure_dialog_window_transparent(&chat);
+    ensure_pet_transparent(&app);
     chat.show()
         .map_err(|error| format!("failed to show chat window: {error}"))?;
     apply_window_deactivate_policy(app.clone())?;
@@ -527,6 +995,7 @@ pub fn show_settings(app: AppHandle) -> Result<(), String> {
     let settings = app
         .get_webview_window("settings")
         .ok_or_else(|| "settings window not found".to_string())?;
+    ensure_dialog_window_transparent(&settings);
     settings
         .show()
         .map_err(|error| format!("failed to show settings window: {error}"))?;

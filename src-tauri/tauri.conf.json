@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "pet",
-        "title": "OctopPet",
+        "title": "",
         "width": 160,
         "height": 160,
         "decorations": false,
@@ -23,7 +23,8 @@
         "alwaysOnTop": true,
         "resizable": false,
         "skipTaskbar": true,
-        "backgroundColor": "#00000000"
+        "focus": false,
+        "focusable": false
       },
       {
         "label": "chat",
@@ -36,8 +37,7 @@
         "decorations": false,
         "transparent": true,
         "shadow": true,
-        "resizable": true,
-        "backgroundColor": "#00000000"
+        "resizable": true
       },
       {
         "label": "settings",
@@ -48,8 +48,7 @@
         "resizable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": true,
-        "backgroundColor": "#00000000"
+        "shadow": true
       }
     ],
     "security": {

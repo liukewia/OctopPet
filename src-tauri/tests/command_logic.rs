@@ -12,8 +12,8 @@ use octop_pet_lib::{
     },
     window_cmd::{
         bottom_anchored_position, bottom_centered_position, centered_position, chat_position,
-        home_url, should_hide_on_close, should_hide_on_unfocus, CHAT_BOTTOM_GAP_LOGICAL,
-        RESIZE_ANIMATION_DURATION,
+        home_url, should_hide_on_close, should_hide_on_unfocus, transparent_chrome_target,
+        TransparentChromeTarget, CHAT_BOTTOM_GAP_LOGICAL, RESIZE_ANIMATION_DURATION,
     },
 };
 
@@ -29,6 +29,7 @@ fn app_config_defaults_match_the_frontend() {
             thread_id_by_agent: HashMap::new(),
             pet_x: None,
             pet_y: None,
+            pet_size: 160.0,
             shortcut_open_pet: "CmdOrCtrl+Shift+O".into(),
             shortcut_open_home: "CmdOrCtrl+Shift+H".into(),
             keep_windows_visible: true,
@@ -46,6 +47,7 @@ fn app_config_serializes_with_frontend_field_names() {
     assert!(value.get("threadIdByAgent").is_some());
     assert!(value.get("petX").is_some());
     assert!(value.get("petY").is_some());
+    assert!(value.get("petSize").is_some());
     assert!(value.get("shortcutOpenPet").is_some());
     assert!(value.get("shortcutOpenHome").is_some());
     assert!(value.get("keepWindowsVisible").is_some());
@@ -124,6 +126,9 @@ fn config_patch_updates_only_owned_fields() {
     );
     patch_at_path(&path, serde_json::json!({ "keepWindowsVisible": false })).unwrap();
     assert!(!load_from_path(&path).unwrap().keep_windows_visible);
+    patch_at_path(&path, serde_json::json!({ "petSize": 224.0 })).unwrap();
+    assert_eq!(load_from_path(&path).unwrap().pet_size, 224.0);
+    assert!(patch_at_path(&path, serde_json::json!({ "petSize": 225.0 })).is_err());
     assert!(patch_at_path(&path, serde_json::json!({ "unknown": true })).is_err());
     fs::remove_dir_all(dir).unwrap();
 }
@@ -286,4 +291,21 @@ fn windows_open_truly_centered() {
         centered_position((480, 360), (100, 50), (1000, 800)),
         (360, 270) // 100+(1000-480)/2=360, 50+(800-360)/2=270
     );
+}
+
+#[test]
+fn transparent_chrome_targets_pet_and_dialogs() {
+    assert_eq!(
+        transparent_chrome_target("pet"),
+        Some(TransparentChromeTarget::Pet)
+    );
+    assert_eq!(
+        transparent_chrome_target("chat"),
+        Some(TransparentChromeTarget::Dialog)
+    );
+    assert_eq!(
+        transparent_chrome_target("settings"),
+        Some(TransparentChromeTarget::Dialog)
+    );
+    assert_eq!(transparent_chrome_target("tray"), None);
 }

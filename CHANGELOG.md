@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows: dragging the pet no longer shows a white square (manual move + skip HWND GDI fill; tao ignores background alpha)
+- Windows: clicking the pet no longer restores a titled OS window (skip set_decorations/set_shadow; strip WS_CAPTION in DWM)
+- Windows pet window title is empty so no "OctopPet" caption sits above the mascot
+- Windows: zero pet non-client area (WM_NCCALCSIZE) so the empty white title strip is gone
+- Windows: chat/settings rounded corners no longer flash a white HWND fill on click/focus
+- Windows pet and chat/settings use DWM blur-behind (not extend-frame) so the mascot is not a white square
+- Clicking the pet no longer flashes a white square over the mascot
 - macOS close traffic light shows × on hover and a pressed state
 - Clicking the pet again reopens chat beside the icon instead of restoring the last screen position
 - Chat window height no longer snaps when starting a new conversation or sending the first message; resize stays bottom-anchored and eases over 360ms
@@ -24,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop pet glides to a smooth stop after release and can be resized from its bottom-right hover handle (80–224 px)
 - Model and agent popovers grow with the chat window so a tall window can show the full list
 - Empty chat shows a gray logo in the message area
 - Agent picker uses the same popover as the model list
