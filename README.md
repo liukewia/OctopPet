@@ -1,4 +1,6 @@
-![Octop Pet](assets/octop-app-icon.png)
+<p align="center">
+  <img src="assets/octop-app-icon.png" alt="Octop Pet" width="128" />
+</p>
 
 **A desktop companion for your self-hosted Octop — floating mascot, compact chat, system tray.**
 
