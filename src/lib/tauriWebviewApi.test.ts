@@ -11,6 +11,12 @@ vi.mock("@tauri-apps/api/window", () => ({
       public y: number,
     ) {}
   },
+  LogicalSize: class {
+    constructor(
+      public width: number,
+      public height: number,
+    ) {}
+  },
   PhysicalPosition: class {
     constructor(
       public x: number,
@@ -19,7 +25,11 @@ vi.mock("@tauri-apps/api/window", () => ({
   },
 }));
 
-import { clearPetWebviewChrome, petUsesManualDrag } from "./tauriWebviewApi";
+import {
+  clearPetWebviewChrome,
+  petSupportsManualMotion,
+  petUsesManualDrag,
+} from "./tauriWebviewApi";
 
 describe("petUsesManualDrag", () => {
   afterEach(() => {
@@ -39,6 +49,7 @@ describe("petUsesManualDrag", () => {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
     });
     expect(petUsesManualDrag()).toBe(false);
+    expect(petSupportsManualMotion()).toBe(true);
   });
 });
 

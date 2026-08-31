@@ -34,6 +34,7 @@ html[data-window-label="pet"] ::selection {
 }
 
 .pet-window {
+  position: relative;
   width: 100%;
   height: 100%;
   display: grid;
@@ -59,4 +60,35 @@ html[data-window-label="pet"] ::selection {
   pointer-events: none;
   -webkit-user-drag: none;
   user-select: none;
+}
+
+.pet-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  cursor: nwse-resize;
+  background: transparent;
+  opacity: 0;
+}
+
+.pet-window:hover .pet-resize-handle {
+  opacity: 1;
+}
+
+.pet-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgb(255 255 255 / 70%);
+  border-bottom: 2px solid rgb(255 255 255 / 70%);
+  border-radius: 1px;
 }

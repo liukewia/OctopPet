@@ -114,7 +114,7 @@ pub fn handle_window_focus_change(window: &tauri::Window, focused: bool) {
 
 #[cfg(windows)]
 mod windows_dwm {
-    use std::ffi::c_void;
+    use std::ffi::{c_char, c_void};
 
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use tauri::WebviewWindow;
@@ -258,8 +258,8 @@ mod windows_dwm {
 
     #[link(name = "kernel32")]
     extern "system" {
-        fn GetModuleHandleA(name: *const u8) -> isize;
-        fn GetProcAddress(module: isize, name: *const u8) -> *const c_void;
+        fn GetModuleHandleA(name: *const c_char) -> isize;
+        fn GetProcAddress(module: isize, name: *const c_char) -> *const c_void;
     }
 
     fn strip_caption(hwnd: isize) {
@@ -270,8 +270,8 @@ mod windows_dwm {
             let _ = SetWindowLongPtrW(hwnd, GWL_STYLE, stripped as isize);
 
             let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-            let ex_stripped =
-                ex & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
+            let ex_stripped = ex
+                & !(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE);
             let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_stripped as isize);
 
             // Always FRAMECHANGED so WM_NCCALCSIZE runs even when styles look unchanged.
@@ -379,11 +379,11 @@ mod windows_dwm {
         type SetWindowCompositionAttribute =
             unsafe extern "system" fn(isize, *mut WindowCompositionAttribData) -> i32;
         unsafe {
-            let user32 = GetModuleHandleA(b"user32.dll\0".as_ptr());
+            let user32 = GetModuleHandleA(c"user32.dll".as_ptr());
             if user32 == 0 {
                 return;
             }
-            let proc = GetProcAddress(user32, b"SetWindowCompositionAttribute\0".as_ptr());
+            let proc = GetProcAddress(user32, c"SetWindowCompositionAttribute".as_ptr());
             if proc.is_null() {
                 return;
             }
@@ -478,8 +478,14 @@ pub fn ensure_dialog_window_transparent(window: &WebviewWindow) {
     {
         // Avoid Tauri set_decorations/set_shadow — they rewrite GWL_STYLE and
         // can restore a caption. Strip styles in DWM chrome instead.
-        if let Err(error) = window.as_ref().set_background_color(Some(Color(0, 0, 0, 0))) {
-            eprintln!("failed to clear {} webview background: {error}", window.label());
+        if let Err(error) = window
+            .as_ref()
+            .set_background_color(Some(Color(0, 0, 0, 0)))
+        {
+            eprintln!(
+                "failed to clear {} webview background: {error}",
+                window.label()
+            );
         }
         apply_windows_dwm_transparent_chrome(window);
     }

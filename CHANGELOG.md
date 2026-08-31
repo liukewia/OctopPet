@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Desktop pet glides to a smooth stop after release and can be resized from its bottom-right hover handle (80–224 px)
 - Model and agent popovers grow with the chat window so a tall window can show the full list
 - Empty chat shows a gray logo in the message area
 - Agent picker uses the same popover as the model list

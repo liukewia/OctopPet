@@ -1,5 +1,9 @@
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalPosition, PhysicalPosition } from "@tauri-apps/api/window";
+import {
+  LogicalPosition,
+  LogicalSize,
+  PhysicalPosition,
+} from "@tauri-apps/api/window";
 
 export type PetWebviewWindow = ReturnType<typeof getCurrentWebviewWindow>;
 
@@ -13,6 +17,10 @@ export function getPetWebviewWindow(): PetWebviewWindow {
 // ourselves with `setPosition` instead.
 export function petUsesManualDrag(): boolean {
   return /Windows/i.test(navigator.userAgent);
+}
+
+export function petSupportsManualMotion(): boolean {
+  return /Windows|Macintosh|Mac OS X/i.test(navigator.userAgent);
 }
 
 export async function clearPetWebviewChrome(
@@ -45,6 +53,12 @@ export async function setPetWebviewLogicalPosition(
   await getPetWebviewWindow()
     .setPosition(new LogicalPosition(x, y))
     .catch((error) => console.error("移动宠物位置失败", error));
+}
+
+export async function setPetWebviewLogicalSize(size: number): Promise<void> {
+  await getPetWebviewWindow()
+    .setSize(new LogicalSize(size, size))
+    .catch((error) => console.error("调整宠物大小失败", error));
 }
 
 export async function startPetWebviewDrag(): Promise<void> {

@@ -25,7 +25,8 @@ const mocks = vi.hoisted(() => ({
   setPetWebviewPosition: vi.fn(),
   startPetWebviewDrag: vi.fn(),
   setPetWebviewLogicalPosition: vi.fn(),
-  petUsesManualDrag: vi.fn(),
+  setPetWebviewLogicalSize: vi.fn(),
+  petSupportsManualMotion: vi.fn(),
   onPetWebviewMoved: vi.fn(),
   onPetWebviewFocusChanged: vi.fn(),
   getPetWebviewWindow: vi.fn(),
@@ -49,7 +50,8 @@ vi.mock("../lib/tauriWebviewApi", () => ({
   setPetWebviewPosition: mocks.setPetWebviewPosition,
   startPetWebviewDrag: mocks.startPetWebviewDrag,
   setPetWebviewLogicalPosition: mocks.setPetWebviewLogicalPosition,
-  petUsesManualDrag: mocks.petUsesManualDrag,
+  setPetWebviewLogicalSize: mocks.setPetWebviewLogicalSize,
+  petSupportsManualMotion: mocks.petSupportsManualMotion,
   onPetWebviewMoved: mocks.onPetWebviewMoved,
   onPetWebviewFocusChanged: mocks.onPetWebviewFocusChanged,
   getPetWebviewWindow: mocks.getPetWebviewWindow,
@@ -60,7 +62,11 @@ vi.mock("../lib/petContextMenu", () => ({
 }));
 
 describe("PetWindow", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -80,7 +86,8 @@ describe("PetWindow", () => {
     mocks.setPetWebviewPosition.mockResolvedValue(undefined);
     mocks.startPetWebviewDrag.mockResolvedValue(undefined);
     mocks.setPetWebviewLogicalPosition.mockResolvedValue(undefined);
-    mocks.petUsesManualDrag.mockReturnValue(false);
+    mocks.setPetWebviewLogicalSize.mockResolvedValue(undefined);
+    mocks.petSupportsManualMotion.mockReturnValue(false);
     mocks.showPetContextMenu.mockResolvedValue(undefined);
     mocks.getPetWebviewWindow.mockReturnValue({});
     mocks.onPetWebviewMoved.mockImplementation(async (handler) => {
@@ -94,6 +101,7 @@ describe("PetWindow", () => {
   it("loads mascot from config on mount", async () => {
     render(<PetWindow />);
     await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalledOnce());
+    expect(mocks.setPetWebviewLogicalSize).toHaveBeenCalledWith(160);
     expect(mocks.setPetWebviewPosition).toHaveBeenCalledWith(120, 240);
   });
 
@@ -131,7 +139,7 @@ describe("PetWindow", () => {
   });
 
   it("moves the window with setPosition on Windows instead of OS drag", async () => {
-    mocks.petUsesManualDrag.mockReturnValue(true);
+    mocks.petSupportsManualMotion.mockReturnValue(true);
     render(<PetWindow />);
     await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalled());
 
@@ -155,6 +163,75 @@ describe("PetWindow", () => {
       expect(mocks.setPetWebviewLogicalPosition).toHaveBeenCalledWith(110, 188),
     );
     expect(mocks.startPetWebviewDrag).not.toHaveBeenCalled();
+  });
+
+  it("keeps moving briefly with inertia after a manual drag is released", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal(
+      "requestAnimationFrame",
+      vi.fn((callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      }),
+    );
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    vi.spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(50)
+      .mockReturnValue(50);
+    mocks.petSupportsManualMotion.mockReturnValue(true);
+    render(<PetWindow />);
+    await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalled());
+
+    const region = screen.getByTestId("pet-drag-region");
+    fireEvent.pointerDown(region, {
+      clientX: 10,
+      clientY: 12,
+      screenX: 100,
+      screenY: 200,
+      pointerId: 1,
+      button: 0,
+    });
+    fireEvent.pointerMove(region, {
+      clientX: 30,
+      clientY: 12,
+      screenX: 120,
+      screenY: 200,
+      pointerId: 1,
+      button: 0,
+    });
+    fireEvent.pointerUp(region, { pointerId: 1 });
+
+    expect(frames).toHaveLength(1);
+    act(() => frames.shift()?.(66));
+    const lastCall = mocks.setPetWebviewLogicalPosition.mock.calls.at(-1);
+    expect(lastCall?.[0]).toBeGreaterThan(110);
+    expect(lastCall?.[1]).toBe(188);
+  });
+
+  it("resizes from the bottom-right hover handle and persists the size", async () => {
+    render(<PetWindow />);
+    await waitFor(() => expect(mocks.loadConfig).toHaveBeenCalled());
+
+    const handle = screen.getByRole("button", { name: "调整宠物大小" });
+    fireEvent.pointerDown(handle, {
+      screenX: 100,
+      screenY: 100,
+      pointerId: 1,
+      button: 0,
+    });
+    fireEvent.pointerMove(handle, {
+      screenX: 140,
+      screenY: 130,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(handle, { pointerId: 1 });
+
+    await waitFor(() =>
+      expect(mocks.setPetWebviewLogicalSize).toHaveBeenCalledWith(200),
+    );
+    expect(mocks.patchConfig).toHaveBeenCalledWith({ petSize: 200 });
+    expect(mocks.showChatNearPet).not.toHaveBeenCalled();
   });
 
   it("does not open chat after a drag click", async () => {

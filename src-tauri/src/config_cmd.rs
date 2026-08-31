@@ -18,6 +18,7 @@ pub struct AppConfig {
     pub thread_id_by_agent: HashMap<String, String>,
     pub pet_x: Option<f64>,
     pub pet_y: Option<f64>,
+    pub pet_size: f64,
     pub shortcut_open_pet: String,
     pub shortcut_open_home: String,
     pub keep_windows_visible: bool,
@@ -33,6 +34,7 @@ impl Default for AppConfig {
             thread_id_by_agent: HashMap::new(),
             pet_x: None,
             pet_y: None,
+            pet_size: 160.0,
             shortcut_open_pet: "CmdOrCtrl+Shift+O".into(),
             shortcut_open_home: "CmdOrCtrl+Shift+H".into(),
             keep_windows_visible: true,
@@ -97,6 +99,13 @@ fn merge_patch(cfg: &mut AppConfig, patch: Value) -> Result<(), String> {
             }
             "petX" => cfg.pet_x = patch_field(key, value.clone())?,
             "petY" => cfg.pet_y = patch_field(key, value.clone())?,
+            "petSize" => {
+                let size: f64 = patch_field(key, value.clone())?;
+                if !(80.0..=224.0).contains(&size) {
+                    return Err("petSize must be between 80 and 224".into());
+                }
+                cfg.pet_size = size;
+            }
             "shortcutOpenPet" => cfg.shortcut_open_pet = patch_field(key, value.clone())?,
             "shortcutOpenHome" => cfg.shortcut_open_home = patch_field(key, value.clone())?,
             "keepWindowsVisible" => cfg.keep_windows_visible = patch_field(key, value.clone())?,
